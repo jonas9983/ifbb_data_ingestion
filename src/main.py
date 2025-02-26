@@ -311,6 +311,7 @@ def get_results_from_tables(urls: list):
             idx += 1
             
     return(results_df)
+
     
 
 def main():

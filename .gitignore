@@ -3,3 +3,10 @@
 *.ipynb
 *.jpg
 *.json
+*.gif
+*.csv
+*.html
+*.pdf
+*.png
+*.ini
+*.env

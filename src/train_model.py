@@ -5,9 +5,10 @@ import os
 import pandas as pd
 import shutil
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import precision_score, recall_score, f1_score, accuracy_score
+from sklearn.metrics import precision_score
 import json
 import random
+from src.etl.loading import supabase_loading
 
 from IPython.display import display
 
@@ -24,160 +25,13 @@ def get_prompt_content():
 
     user_content = { "role": "user", "content": user_content_prompt}
 
-    supabase_parent_path = 'https://qesnrciwmhxfhdaojwwo.supabase.co/storage/v1/object/public/finetuning/2024'
+    supabase_parent_path = 'https://qesnrciwmhxfhdaojwwo.supabase.co/storage/v1/object/public/resultImages/2024'
 
     return(system_content, user_content_prompt,user_content, supabase_parent_path)
 
-def configure_messages_to_fine_tune_model(num_images: None):
-    
-    def create_train_test_folders():
-        """ Each time this function is called the data is
-        """
-
-        train_test_parent_path = './data/train_test_split'
-
-        train_folder_imgs = f'{train_test_parent_path}/train/imgs'
-        validation_folder_imgs = f'{train_test_parent_path}/validation/imgs'
-
-        train_folder_json = f'{train_test_parent_path}/train/json'
-        validation_folder_json = f'{train_test_parent_path}/validation/json'
-
-        if os.path.exists(train_test_parent_path):
-            shutil.rmtree(train_test_parent_path)
-
-        os.makedirs(train_folder_imgs, exist_ok=True)
-        os.makedirs(validation_folder_imgs, exist_ok=True)
-        os.makedirs(train_folder_json, exist_ok=True)
-        os.makedirs(validation_folder_json, exist_ok=True)
-
-        return(train_folder_imgs, validation_folder_imgs, train_folder_json, validation_folder_json)
-    
-    def split_data_train_test(test_size = 0.2, random_state = 42):
-        """Randomly split the data into training and validation test sets 
-        """
-        img_folder = './data/full_data/imgs/'
-        json_folder = './data/full_data/json/'
-
-        train_folder_imgs, validation_folder_imgs, train_folder_json, validation_folder_json = create_train_test_folders()
-
-        all_files_imgs = os.listdir(img_folder)
-
-        if num_images is not None:
-            random.seed(random_state)
-            all_files_imgs = random.sample(all_files_imgs, num_images)
-
-        train_files_imgs, test_files_imgs = train_test_split(
-                all_files_imgs, test_size=test_size, random_state=random_state
-            )
-
-        # Move files to respective folders
-        for file in train_files_imgs:
-            shutil.copy(os.path.join(img_folder, file), os.path.join(train_folder_imgs, file))
-            shutil.copy(os.path.join(json_folder, f'{file}.json'), os.path.join(train_folder_json, f'{file}.json'))
-
-        for file in test_files_imgs:
-            shutil.copy(os.path.join(img_folder, file), os.path.join(validation_folder_imgs, file))
-            shutil.copy(os.path.join(json_folder, f'{file}.json'), os.path.join(validation_folder_json, f'{file}.json'))
+def prompt_gpt(model_id: str, supabase_img_url: str):
         
-        print(f"Training files: {len(train_files_imgs)}, Testing files: {len(test_files_imgs)}")
-    
-    def create_messages_json(path: str):
-        """Create json file with messages to train chatGPT
-
-        Args:
-            path (str): Parent path for the images and json values. Should either be 'train' or 'validation'
-        """
-        system_content, _, user_content, supabase_parent_path = get_prompt_content()
-        parent_path = './data/train_test_split'
-        all_images = os.listdir(f'{parent_path}/{path}/imgs')
-        for img_filename in all_images:
-            supabase_path = f'{supabase_parent_path}/{img_filename}'
-            temp_dict = {"messages": []}
-            user_content_imgs = {"role": "user", "content": [
-                {"type": "image_url",
-                "image_url": {
-                    "url": f"{supabase_path}"
-                }}
-            ]}
-            with open(f'{parent_path}/{path}/json/{img_filename}.json', "r") as file:
-                json_file = json.load(file)
-
-            json_stringify = json.dumps(json_file)
-            
-            assintant_content = { "role": "assistant", "content": json_stringify}
-
-            temp_dict["messages"].append(system_content)
-            temp_dict["messages"].append(user_content)
-            temp_dict['messages'].append(user_content_imgs)
-            temp_dict['messages'].append(assintant_content)
-
-            with open(f'{parent_path}/{path}_fine_tuning.json', 'a') as file:
-                file.write(json.dumps(temp_dict) + '\n') # use `json.loads` to do the reverse
-    
-    split_data_train_test()
-    create_messages_json(path = 'train')
-    create_messages_json(path = 'validation')
-
-def train_custom_model(training_file_name: str, validation_file_name: str, model: str):
-    def upload_file(file_name: str, purpose: str) -> str:
-        with open(file_name, "rb") as file_fd:
-            response = client.files.create(file=file_fd, purpose=purpose)
-        return response.id
-
-    def configure_file_ids(training_file_id: str, validation_file_id):
-        response = client.fine_tuning.jobs.create(
-            training_file=training_file_id,
-            validation_file=validation_file_id,
-            model=model,
-            suffix="recipe-ner",
-        )
-        
-        job_id = response.id
-
-        return(job_id)
-
-    def retrieve_fine_tuned_model(job_id: str):
-
-        response = client.fine_tuning.jobs.list_events(job_id)
-        events = response.data
-        events.reverse()
-        while True:
-            # Retrieve the fine-tuning job details
-            response = client.fine_tuning.jobs.retrieve(job_id)
-            
-            # Check the status of the job
-            status = response.get('status', '').lower()
-            
-            if status == 'succeeded':
-                # If the job succeeded, retrieve the fine-tuned model ID
-                fine_tuned_model_id = response.get('fine_tuned_model')
-                print("Fine-tuning completed. Model ID:", fine_tuned_model_id)
-                return fine_tuned_model_id
-            elif status == 'failed':
-                # Handle the case where fine-tuning failed
-                raise Exception("Fine-tuning failed. Check logs for details.")
-            
-            # Wait for some time before polling again
-            print("Fine-tuning in progress... Current status:", status)
-            time.sleep(10)  # Poll every 10 seconds
-    
-
-    training_file_id = upload_file(training_file_name, "fine-tune")
-    validation_file_id = upload_file(validation_file_name, "fine-tune")
-
-    job_id = configure_file_ids(training_file_id= training_file_id, validation_file_id= validation_file_id)
-
-    fine_tuned_model_id = retrieve_fine_tuned_model(job_id)
-
-    return(fine_tuned_model_id)
-
-def test_gpt_model(model_id:str):
-
-    metrics_aggregated = pd.DataFrame()
-
-    _, user_content_prompt,_, supabase_parent_path  = get_prompt_content()
-
-    def prompt_gpt(supabase_img_url: str):
+        _, user_content_prompt, _, _ = get_prompt_content()
 
         response = client.chat.completions.create(
             model = model_id, 
@@ -199,77 +53,114 @@ def test_gpt_model(model_id:str):
             ],
             )
         obtained_dict = json.loads(response.choices[0].message.content)
-        img_url_temp = supabase_img_url.split('/')[-1]
-        with open(f"./data/test_results/{img_url_temp}.json", 'w') as f:
-            json.dump(obtained_dict, f)
-        return(pd.DataFrame(obtained_dict))
-    
-    def compare_results(obtained_df: pd.DataFrame, img_url: str):
+        
+        return(obtained_dict)
 
-        with open(f'./data/full_data/test/json/{img_url}.json', "r") as file:
-            json_file = json.load(file)
-        expected_df = pd.DataFrame(json_file)
+
+def test_gpt_model(model_id:str, test_path: str, results_path = None):
+
+    metrics_aggregated = pd.DataFrame()
+
+    _, _,_, supabase_parent_path  = get_prompt_content()
+
+    def normalize_for_metrics(expected: dict, obtained: dict):
+        expected_df = pd.DataFrame(expected)
+        max_length = expected_df.shape[0]
+        expected_df.loc[:,'finals'] = expected_df['finals'].fillna('0')
+        
+        # Keys that you want to ensure exist
+        required_keys = [
+            "competition", "location", "date", "competitors_name", "country",
+            "judging", "finals", "total", "place", "competition_type"
+        ]
+        
+        # Ensure all required keys exist in the obtained dictionary, initializing as empty lists if missing
+        normalized_data = {}
+        
+        for key in required_keys:
+            # Get the current list from obtained, defaulting to an empty list if the key is missing
+            current_list = obtained.get(key, [])
+
+            # Ensure the list has a length of max_length by either trimming or padding with empty strings
+            if len(current_list) > max_length:
+                normalized_data[key] = current_list[:max_length]  # Trim to max_length
+            else:
+                normalized_data[key] = current_list + [None] * (max_length - len(current_list))
+        
+        # Create DataFrame from the normalized data
+        obtained_df = pd.DataFrame(normalized_data)
+        expected_df = expected_df.fillna("MISSING")
+        obtained_df.loc[:,'finals'] = obtained_df['finals'].fillna('0')
+        obtained_df = obtained_df.fillna("MISSING").astype(str)
+        
+        return expected_df, obtained_df
+    
+    def compare_results(obtained_dict: pd.DataFrame, img_url: str):
+
+        expected_json_file_path = f'./data/full_data/test/json/{img_url}.json'
+
+        if os.path.exists(expected_json_file_path):
+            with open(expected_json_file_path, "r") as file:
+                json_file = json.load(file)
+        else:
+            return(pd.DataFrame())
 
         metrics = {}
+
+        expected_df, obtained_df = normalize_for_metrics(expected = json_file, obtained= obtained_dict)
 
         expected_df_copy = expected_df.copy()
         obtained_df_copy = obtained_df.copy()
 
-        common_columns = set(expected_df_copy.columns) & set(obtained_df_copy.columns)
-        expected_df_copy = expected_df_copy[list(common_columns)].sort_index(axis=1).copy()
-        obtained_df_copy = obtained_df_copy[list(common_columns)].sort_index(axis=1).copy()
-
+        common_columns = set(expected_df_copy.columns) & set(obtained_df.columns)
 
         for column in common_columns:
-            if column in ['finals', 'judging', 'place', 'total']:
-                expected_df_copy[column] = expected_df_copy[column].fillna(0).astype(str)
-                obtained_df_copy[column] = obtained_df_copy[column].fillna(0).astype(str)
 
-            if expected_df_copy[column].dtype == 'object':  # Categorical columns
-                expected_values = expected_df_copy[column]
-                obtained_values = obtained_df_copy[column]
+            expected_values = expected_df_copy[column]
+            obtained_values = obtained_df_copy[column]
 
-                precision = precision_score(expected_values, obtained_values, average='micro', zero_division=0)
-                recall = recall_score(expected_values, obtained_values, average='micro', zero_division=0)
-                f1 = f1_score(expected_values, obtained_values, average='micro', zero_division=0)
+            precision = precision_score(expected_values, obtained_values, average='micro', zero_division=0)
 
-                metrics[column] = {'Precision': precision, 'Recall': recall, 'F1-score': f1}
+            metrics[column] = {'Precision': precision}
 
-                metrics_list = [
-                    {
-                        'tag': metric,
-                        'value': value, 
-                        'img_url': img_url,
-                        'column_name': column,
-                        'nr_competitors': expected_df.shape[0]
-                    }
-                    for column, metric_values in metrics.items()
-                    for metric, value in metric_values.items()
-                ]
+            metrics_list = [
+                {
+                    'tag': metric,
+                    'value': value, 
+                    'img_url': img_url,
+                    'column_name': column,
+                    'nr_competitors': expected_df.shape[0]
+                }
+                for column, metric_values in metrics.items()
+                for metric, value in metric_values.items()
+            ]
 
         return(pd.DataFrame(metrics_list))
     
-    images_to_test = os.listdir('./data/full_data/test/imgs/')
+    images_to_test = os.listdir(test_path)
     
     for img in images_to_test:
         supabase_img_url = f'{supabase_parent_path}/{img}'
-        if os.path.exists(f'./data/test_results/{img}.json'):
+        if os.path.exists(f'./data/test_results/{results_path}{img}.json'):
             print("File already exists. Fetching from test_results folder")
-            with open(f'./data/test_results/{img}.json', "r") as file:
-                json_file = json.load(file)
-            obtained_df = pd.DataFrame(json_file)
+            with open(f'./data/test_results/{results_path}{img}.json', "r") as file:
+                obtained_dict = json.load(file)
         else:
             try:
                 print("Prompting ChatGPT")
-                obtained_df = prompt_gpt(supabase_img_url = supabase_img_url)
+                obtained_dict = prompt_gpt(model_id = model_id, supabase_img_url = supabase_img_url)
             except Exception as e:
                 print(f"Error {e}")
                 continue
-        metrics = compare_results(obtained_df = obtained_df, img_url = img)
+        metrics = compare_results(obtained_dict = obtained_dict, img_url = img)
 
         metrics_aggregated = pd.concat([metrics_aggregated, metrics])
     
     return(metrics_aggregated)
+            
+
+        
+
 
 
     
