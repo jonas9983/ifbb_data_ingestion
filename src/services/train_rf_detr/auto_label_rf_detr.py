@@ -35,6 +35,7 @@ class RF_Detr_AutoLabeler:
     
     BASE_COCO_PERSON_CLASS_ID = 1
     DEFAULT_OUTPUT_BASE = "data/annotations/"
+    FIXED_CONTAINER_PATH_PREFIX = "label-studio/source"
 
     def __init__(self, input_dir, confidence_threshold=0.5, image_url_prefix=""):
         self.input_path = Path(input_dir).resolve()
@@ -105,12 +106,19 @@ class RF_Detr_AutoLabeler:
                 print(f"Error reading image {img_file.name}: {e}. Skipping.")
                 continue
             
-            # Construct the image URL - either use prefix or local path
+            # 1. Always create the relative path for local file storage
+            relative_storage_path = f"{self.FIXED_CONTAINER_PATH_PREFIX}/{img_file.name}"
+            
+            # 2. Create the full image URL
+            local_file_url_part = f"/data/local-files/?d={relative_storage_path}"
+            
             if self.image_url_prefix:
-                image_url = f"{self.image_url_prefix}/{img_file.name}"
+                # If a prefix (e.g., http://localhost:8080) is given, prepend it
+                base_url = self.image_url_prefix.rstrip('/')
+                image_url = f"{base_url}{local_file_url_part}"
             else:
-                # Use relative path or file:// URL for local files
-                image_url = f"/data/local-files/?d={self.target_user}/{img_file.name}"
+                # Otherwise, use the relative URL (less likely with your setup)
+                image_url = local_file_url_part
             
             # Create the task structure
             task = {
@@ -191,8 +199,8 @@ class RF_Detr_AutoLabeler:
         
         total_predictions = sum(len(task.get("predictions", [])) for task in label_studio_tasks)
         total_boxes = sum(len(pred.get("result", [])) 
-                         for task in label_studio_tasks 
-                         for pred in task.get("predictions", []))
+                          for task in label_studio_tasks 
+                          for pred in task.get("predictions", []))
         
         print(f"\nSuccessfully generated Label Studio JSON file:")
         print(f"  - {len(label_studio_tasks)} tasks")
@@ -266,7 +274,7 @@ if __name__ == '__main__':
         '--url-prefix',
         type=str,
         default="",
-        help='URL prefix for images (e.g., http://localhost:8080/data). Leave empty for local file paths.'
+        help='URL prefix for images (e.g., http://localhost:8080). Leave empty for relative local file paths.'
     )
     
     args = parser.parse_args()
