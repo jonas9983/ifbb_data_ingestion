@@ -205,7 +205,7 @@ class InstagramDownloader:
                         else:
                             self.stats['failed_downloads'] += 1
                     except Exception as e:
-                        print(f"  Critical Error with {filename}: {e}")
+                        print(f" Critical Error with {filename}: {e}")
                         self.stats['failed_downloads'] += 1
         else:
             print("\nNo new media files found to download.")
@@ -222,7 +222,7 @@ class InstagramDownloader:
         print(f"Posts with target users: {self.stats['relevant_posts']}")
         print(f"\nPosts per target user:")
         for user, count in self.user_stats.items():
-            print(f"  @{user}: {count} posts")
+            print(f" @{user}: {count} posts")
         print(f"\nImages downloaded: {self.stats['images_downloaded']}")
         print(f"Videos downloaded: {self.stats['videos_downloaded']}")
         print(f"Files skipped (already exist): {self.stats['skipped']}")
