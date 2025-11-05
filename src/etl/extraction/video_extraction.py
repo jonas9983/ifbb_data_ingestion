@@ -4,9 +4,6 @@ import subprocess
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# --- Configuration ---
-# Requires FFmpeg installed and accessible in the system PATH.
-
 class VideoFrameExtractor:
     """
     Iterates over a specified folder (or all user folders), finds video files, 
