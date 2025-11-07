@@ -26,13 +26,13 @@ ALL_USER_FOLDERS = [
 
 class RF_Detr_AutoLabeler:
     BASE_COCO_PERSON_CLASS_ID = 1
-    FIXED_CONTAINER_PATH_PREFIX = "label-studio/source"
 
-    def __init__(self, model, input_dir, confidence_threshold=0.5, image_url_prefix=""):
+    def __init__(self, model, input_dir, split_name, confidence_threshold=0.5, image_url_prefix=""):
         self.input_path = Path(input_dir).resolve()
         self.confidence_threshold = confidence_threshold
         self.image_url_prefix = image_url_prefix
         self.model = model
+        self.split_name = split_name  # Store the split name (train/val/test)
 
         self.target_user = self.input_path.name
         self.categories_map = {name: i + 1 for i, name in enumerate(ALL_USER_FOLDERS)}
@@ -64,7 +64,8 @@ class RF_Detr_AutoLabeler:
             print(f"Error reading image {img_file.name}: {e}. Skipping.")
             return None
 
-        relative_storage_path = f"{self.FIXED_CONTAINER_PATH_PREFIX}/{img_file.name}"
+        # Dynamically construct the path: split/athlete/image.jpg
+        relative_storage_path = f"{self.split_name}/{self.target_user}/{img_file.name}"
         local_file_url_part = f"/data/local-files/?d={relative_storage_path}"
 
         if self.image_url_prefix:
@@ -195,6 +196,7 @@ def process_entire_dataset(base_dir, output_dir, confidence_threshold=0.5, image
                 labeler = RF_Detr_AutoLabeler(
                     model=model,
                     input_dir=athlete_dir,
+                    split_name=split,  # Pass the split name
                     confidence_threshold=confidence_threshold,
                     image_url_prefix=image_url_prefix
                 )
