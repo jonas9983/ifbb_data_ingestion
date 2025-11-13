@@ -27,22 +27,26 @@ ALL_USER_FOLDERS = [
 class RF_Detr_AutoLabeler:
     BASE_COCO_PERSON_CLASS_ID = 1
 
-    def __init__(self, model, input_dir, split_name, confidence_threshold=0.5, image_url_prefix=""):
+    # Added 'target_user_name' argument for flexibility
+    def __init__(self, model, input_dir, split_name, target_user_name, confidence_threshold=0.5, image_url_prefix=""):
         self.input_path = Path(input_dir).resolve()
         self.confidence_threshold = confidence_threshold
         self.image_url_prefix = image_url_prefix
         self.model = model
         self.split_name = split_name  # Store the split name (train/val/test)
 
-        self.target_user = self.input_path.name
+        self.target_user = target_user_name  # <<< Use explicit name
         self.categories_map = {name: i + 1 for i, name in enumerate(ALL_USER_FOLDERS)}
-        self.TARGET_CATEGORY_ID = self.categories_map.get(self.target_user)
-
-        if self.TARGET_CATEGORY_ID is None:
-            raise ValueError(
-                f"Target user folder '{self.target_user}' is not in the predefined list of users. "
-                "Check ALL_USER_FOLDERS list."
-            )
+        
+        # Check if the target user is a known athlete
+        if self.target_user in self.categories_map:
+            self.TARGET_CATEGORY_ID = self.categories_map[self.target_user]
+            self.is_athlete_folder = True # Flag for path formatting
+        else:
+            # This is the "flat" case (e.g., target_user is 'test')
+            self.TARGET_CATEGORY_ID = None # Not a specific athlete
+            self.is_athlete_folder = False # Flag for path formatting
+            print(f"Info: Processing flat directory. Labeling detected people as '{self.target_user}'.")
 
     def _get_image_files(self):
         if not self.input_path.is_dir():
@@ -64,8 +68,13 @@ class RF_Detr_AutoLabeler:
             print(f"Error reading image {img_file.name}: {e}. Skipping.")
             return None
 
-        # Dynamically construct the path: split/athlete/image.jpg
-        relative_storage_path = f"{self.split_name}/{self.target_user}/{img_file.name}"
+        if self.is_athlete_folder:
+            # Original case: split/athlete/image.jpg
+            relative_storage_path = f"{self.split_name}/{self.target_user}/{img_file.name}"
+        else:
+            # Flat case: split/image.jpg
+            relative_storage_path = f"{self.split_name}/{img_file.name}"
+
         local_file_url_part = f"/data/local-files/?d={relative_storage_path}"
 
         if self.image_url_prefix:
@@ -115,7 +124,8 @@ class RF_Detr_AutoLabeler:
                         "width": width_percent,
                         "height": height_percent,
                         "rotation": 0,
-                        "rectanglelabels": [self.target_user]
+                        # The label is now flexible: 'ahmd_ashkanani' or 'test'
+                        "rectanglelabels": [self.target_user] 
                     },
                     "id": f"bbox_{i}",
                     "from_name": "label",
@@ -145,6 +155,7 @@ class RF_Detr_AutoLabeler:
 
         all_tasks = []
 
+        # tqdm description now correctly shows 'ahmd_ashkanani' or 'test'
         for img_file in tqdm(image_files, desc=f"Inference: {self.target_user}"):
             try:
                 image = Image.open(img_file).convert("RGB")
@@ -169,7 +180,6 @@ class RF_Detr_AutoLabeler:
 
         return all_tasks
 
-
 def process_entire_dataset(base_dir, output_dir, confidence_threshold=0.5, image_url_prefix=""):
     base_dir = Path(base_dir).resolve()
     output_dir = Path(output_dir).resolve()
@@ -177,6 +187,7 @@ def process_entire_dataset(base_dir, output_dir, confidence_threshold=0.5, image
 
     print(f"Running auto-labeling for dataset in {base_dir}")
 
+    # Ensure model is initialized only once
     model = RFDETRMedium()
     model.optimize_for_inference()
 
@@ -189,20 +200,43 @@ def process_entire_dataset(base_dir, output_dir, confidence_threshold=0.5, image
             continue
 
         combined_tasks = []
+        # List will store (input_dir_path, target_user_name, descriptive_name)
+        directories_to_process = []
+        
+        # Check if the split directory contains any subdirectories
+        subdirs = [d for d in split_path.iterdir() if d.is_dir()]
+        
+        if subdirs:
+            # Case 1: Subfolders (e.g., /train/<athlete_name>) exist.
+            # Target user is the subdir name.
+            for athlete_dir in subdirs:
+                if athlete_dir.name in ALL_USER_FOLDERS:
+                    directories_to_process.append((athlete_dir, athlete_dir.name, athlete_dir.name))
+        else:
+            # Case 2: No subfolders found (images are directly in /train/).
+            # Target user is the split name (e.g., 'train').
+            target_name = split_path.name
+            directories_to_process.append((split_path, target_name, f"root ({target_name})"))
 
-        for athlete_dir in split_path.iterdir():
-            if athlete_dir.is_dir() and athlete_dir.name in ALL_USER_FOLDERS:
-                print(f"Processing {split}/{athlete_dir.name}")
-                labeler = RF_Detr_AutoLabeler(
-                    model=model,
-                    input_dir=athlete_dir,
-                    split_name=split,  # Pass the split name
-                    confidence_threshold=confidence_threshold,
-                    image_url_prefix=image_url_prefix
-                )
-                tasks = labeler.run()
-                combined_tasks.extend(tasks)
+        if not directories_to_process:
+            print(f"Skipping {split}: No relevant images or subfolders found.")
+            continue
 
+        # Unpack the 3-item tuple
+        for input_dir, target_user_name, descriptive_name in directories_to_process:
+            print(f"Processing {split}/{descriptive_name}")
+            
+            labeler = RF_Detr_AutoLabeler(
+                model=model,
+                input_dir=input_dir,
+                split_name=split,
+                target_user_name=target_user_name,
+                confidence_threshold=confidence_threshold,
+                image_url_prefix=image_url_prefix
+            )
+            tasks = labeler.run()
+            combined_tasks.extend(tasks)
+        
         output_path = output_dir / f"{split}.json"
         with open(output_path, 'w') as f:
             json.dump(combined_tasks, f, indent=2)
