@@ -27,26 +27,44 @@ ALL_USER_FOLDERS = [
 class RF_Detr_AutoLabeler:
     BASE_COCO_PERSON_CLASS_ID = 1
 
-    # Added 'target_user_name' argument for flexibility
-    def __init__(self, model, input_dir, split_name, target_user_name, confidence_threshold=0.5, image_url_prefix=""):
+    def __init__(self, model, input_dir, split_name="test", target_user_name: str = None, 
+                 confidence_threshold=0.5, image_url_prefix="", 
+                 use_custom_classes=False, class_names=None):
+        """
+        Args:
+            model: The RFDETR model
+            input_dir: Directory containing images
+            split_name: Name of the split (train/val/test)
+            target_user_name: Target label name (only used if use_custom_classes=False)
+            confidence_threshold: Confidence threshold for detections
+            image_url_prefix: Optional URL prefix for Label Studio
+            use_custom_classes: If True, use class_id to determine labels from class_names
+            class_names: List of class names (e.g., ALL_USER_FOLDERS for custom model)
+        """
         self.input_path = Path(input_dir).resolve()
         self.confidence_threshold = confidence_threshold
         self.image_url_prefix = image_url_prefix
         self.model = model
-        self.split_name = split_name  # Store the split name (train/val/test)
+        self.split_name = split_name
+        self.use_custom_classes = use_custom_classes
+        self.class_names = class_names if class_names else ALL_USER_FOLDERS
 
-        self.target_user = target_user_name  # <<< Use explicit name
+        # For backward compatibility with single-label mode
+        self.target_user = target_user_name if target_user_name is not None else split_name
+        
         self.categories_map = {name: i + 1 for i, name in enumerate(ALL_USER_FOLDERS)}
         
-        # Check if the target user is a known athlete
         if self.target_user in self.categories_map:
             self.TARGET_CATEGORY_ID = self.categories_map[self.target_user]
-            self.is_athlete_folder = True # Flag for path formatting
+            self.is_athlete_folder = True
         else:
-            # This is the "flat" case (e.g., target_user is 'test')
-            self.TARGET_CATEGORY_ID = None # Not a specific athlete
-            self.is_athlete_folder = False # Flag for path formatting
-            print(f"Info: Processing flat directory. Labeling detected people as '{self.target_user}'.")
+            self.TARGET_CATEGORY_ID = None
+            self.is_athlete_folder = False
+            
+        if use_custom_classes:
+            print(f"Info: Using custom classes mode. Will detect {len(self.class_names)} classes.")
+        else:
+            print(f"Info: Using single-label mode. Labeling detected objects as '{self.target_user}'.")
 
     def _get_image_files(self):
         if not self.input_path.is_dir():
@@ -69,10 +87,8 @@ class RF_Detr_AutoLabeler:
             return None
 
         if self.is_athlete_folder:
-            # Original case: split/athlete/image.jpg
             relative_storage_path = f"{self.split_name}/{self.target_user}/{img_file.name}"
         else:
-            # Flat case: split/image.jpg
             relative_storage_path = f"{self.split_name}/{img_file.name}"
 
         local_file_url_part = f"/data/local-files/?d={relative_storage_path}"
@@ -94,6 +110,9 @@ class RF_Detr_AutoLabeler:
             for i in range(len(detections.xyxy)):
                 bbox_xyxy = detections.xyxy[i]
                 confidence = detections.confidence[i]
+                
+                # Get the class_id for this detection
+                class_id = detections.class_id[i]
 
                 if isinstance(bbox_xyxy, torch.Tensor):
                     bbox_xyxy = bbox_xyxy.cpu().numpy()
@@ -106,6 +125,13 @@ class RF_Detr_AutoLabeler:
                     confidence = float(confidence)
                 else:
                     confidence = float(confidence)
+                    
+                if isinstance(class_id, torch.Tensor):
+                    class_id = class_id.item()
+                elif isinstance(class_id, np.ndarray):
+                    class_id = int(class_id)
+                else:
+                    class_id = int(class_id)
 
                 x_min, y_min, x_max, y_max = bbox_xyxy
 
@@ -113,6 +139,14 @@ class RF_Detr_AutoLabeler:
                 y_percent = (float(y_min) / original_height) * 100
                 width_percent = ((float(x_max) - float(x_min)) / original_width) * 100
                 height_percent = ((float(y_max) - float(y_min)) / original_height) * 100
+
+                # Determine the label based on mode
+                if self.use_custom_classes:
+                    # Use the class_id to get the actual class name
+                    label = self.class_names[class_id] if class_id < len(self.class_names) else f"class_{class_id}"
+                else:
+                    # Use the single target_user label (backward compatible)
+                    label = self.target_user
 
                 result_item = {
                     "original_width": original_width,
@@ -124,8 +158,7 @@ class RF_Detr_AutoLabeler:
                         "width": width_percent,
                         "height": height_percent,
                         "rotation": 0,
-                        # The label is now flexible: 'ahmd_ashkanani' or 'test'
-                        "rectanglelabels": [self.target_user] 
+                        "rectanglelabels": [label]
                     },
                     "id": f"bbox_{i}",
                     "from_name": "label",
@@ -148,15 +181,25 @@ class RF_Detr_AutoLabeler:
 
         return task
 
-    def run(self):
+    def run(self, return_detections=False):
+        """
+        Run inference on all images.
+        
+        Args:
+            return_detections: If True, return both tasks and raw detections for visualization
+        
+        Returns:
+            all_tasks: List of Label Studio formatted tasks
+            all_detections: (Optional) List of (image_path, detections) tuples for visualization
+        """
         image_files = self._get_image_files()
         if not image_files:
-            return []
+            return ([], []) if return_detections else []
 
         all_tasks = []
+        all_detections = []  # Store raw detections for visualization
 
-        # tqdm description now correctly shows 'ahmd_ashkanani' or 'test'
-        for img_file in tqdm(image_files, desc=f"Inference: {self.target_user}"):
+        for img_file in tqdm(image_files, desc=f"Inference: {self.split_name}"):
             try:
                 image = Image.open(img_file).convert("RGB")
                 detections = self.model.predict(image, threshold=self.confidence_threshold)
@@ -164,30 +207,41 @@ class RF_Detr_AutoLabeler:
                 print(f"Error processing {img_file.name}: {e}. Skipping.")
                 continue
 
-            class_id = detections.class_id
-            if isinstance(class_id, torch.Tensor):
-                person_mask = class_id == self.BASE_COCO_PERSON_CLASS_ID
-            elif isinstance(class_id, np.ndarray):
-                person_mask = class_id == self.BASE_COCO_PERSON_CLASS_ID
-            else:
-                person_mask = [cid == self.BASE_COCO_PERSON_CLASS_ID for cid in class_id]
+            # Store raw detections BEFORE filtering (for visualization)
+            if return_detections:
+                all_detections.append((img_file, detections))
 
-            person_detections = detections[person_mask]
+            # Filter detections if needed
+            filtered_detections = detections
+            if not self.use_custom_classes:
+                # Legacy mode: filter for COCO person class only
+                class_id = detections.class_id
+                if isinstance(class_id, torch.Tensor):
+                    person_mask = class_id == self.BASE_COCO_PERSON_CLASS_ID
+                elif isinstance(class_id, np.ndarray):
+                    person_mask = class_id == self.BASE_COCO_PERSON_CLASS_ID
+                else:
+                    person_mask = [cid == self.BASE_COCO_PERSON_CLASS_ID for cid in class_id]
+                
+                filtered_detections = detections[person_mask]
 
-            task = self._format_task(img_file, person_detections)
+            task = self._format_task(img_file, filtered_detections)
             if task:
                 all_tasks.append(task)
 
+        if return_detections:
+            return all_tasks, all_detections
         return all_tasks
 
+
 def process_entire_dataset(base_dir, output_dir, confidence_threshold=0.5, image_url_prefix=""):
+    """Original function for COCO person detection (backward compatible)"""
     base_dir = Path(base_dir).resolve()
     output_dir = Path(output_dir).resolve()
     splits = ["train", "val", "test"]
 
     print(f"Running auto-labeling for dataset in {base_dir}")
 
-    # Ensure model is initialized only once
     model = RFDETRMedium()
     model.optimize_for_inference()
 
@@ -200,21 +254,15 @@ def process_entire_dataset(base_dir, output_dir, confidence_threshold=0.5, image
             continue
 
         combined_tasks = []
-        # List will store (input_dir_path, target_user_name, descriptive_name)
         directories_to_process = []
         
-        # Check if the split directory contains any subdirectories
         subdirs = [d for d in split_path.iterdir() if d.is_dir()]
         
         if subdirs:
-            # Case 1: Subfolders (e.g., /train/<athlete_name>) exist.
-            # Target user is the subdir name.
             for athlete_dir in subdirs:
                 if athlete_dir.name in ALL_USER_FOLDERS:
                     directories_to_process.append((athlete_dir, athlete_dir.name, athlete_dir.name))
         else:
-            # Case 2: No subfolders found (images are directly in /train/).
-            # Target user is the split name (e.g., 'train').
             target_name = split_path.name
             directories_to_process.append((split_path, target_name, f"root ({target_name})"))
 
@@ -222,7 +270,6 @@ def process_entire_dataset(base_dir, output_dir, confidence_threshold=0.5, image
             print(f"Skipping {split}: No relevant images or subfolders found.")
             continue
 
-        # Unpack the 3-item tuple
         for input_dir, target_user_name, descriptive_name in directories_to_process:
             print(f"Processing {split}/{descriptive_name}")
             
@@ -242,6 +289,94 @@ def process_entire_dataset(base_dir, output_dir, confidence_threshold=0.5, image
             json.dump(combined_tasks, f, indent=2)
 
         print(f"Saved {len(combined_tasks)} tasks to {output_path}")
+
+
+def visualize_detections(image_path, detections, class_names, max_size=800):
+    """
+    Visualize detections on an image using supervision library.
+    
+    Args:
+        image_path: Path to the image file
+        detections: Raw detections from model.predict()
+        class_names: List of class names (e.g., ALL_USER_FOLDERS)
+        max_size: Maximum dimension for thumbnail (default 800)
+    
+    Returns:
+        annotated_image: PIL Image with bounding boxes and labels
+    """
+    try:
+        import supervision as sv
+    except ImportError:
+        print("Please install supervision: pip install supervision")
+        return None
+    
+    
+    image = Image.open(image_path)
+    
+    # Setup colors and styles
+    color = sv.ColorPalette.from_hex([
+        "#ffff00", "#ff9b00", "#ff8080", "#ff66b2", "#ff66ff", "#b266ff",
+        "#9999ff", "#3399ff", "#66ffff", "#33ff99", "#66ff66", "#99ff00"
+    ])
+    text_scale = sv.calculate_optimal_text_scale(resolution_wh=image.size)
+    thickness = sv.calculate_optimal_line_thickness(resolution_wh=image.size)
+    
+    bbox_annotator = sv.BoxAnnotator(color=color, thickness=thickness)
+    label_annotator = sv.LabelAnnotator(
+        color=color,
+        text_color=sv.Color.BLACK,
+        text_scale=text_scale,
+        smart_position=True
+    )
+    
+    # Create labels with class names and confidence
+    labels = [
+        f"{class_names[class_id]} {confidence:.2f}"
+        for class_id, confidence
+        in zip(detections.class_id, detections.confidence)
+    ]
+    
+    # Annotate image
+    annotated_image = image.copy()
+    annotated_image = bbox_annotator.annotate(annotated_image, detections)
+    annotated_image = label_annotator.annotate(annotated_image, detections, labels)
+    
+    # Resize for display
+    annotated_image.thumbnail((max_size, max_size))
+    
+    return annotated_image
+
+
+def visualize_batch(detections_list, class_names, output_dir=None, max_images=5):
+    """
+    Visualize multiple images with detections.
+    
+    Args:
+        detections_list: List of (image_path, detections) tuples from labeler.run(return_detections=True)
+        class_names: List of class names
+        output_dir: Optional directory to save visualizations
+        max_images: Maximum number of images to visualize
+    
+    Returns:
+        List of annotated PIL Images
+    """
+    annotated_images = []
+    
+    for i, (img_path, detections) in enumerate(detections_list[:max_images]):
+        print(f"Visualizing {img_path.name}...")
+        
+        annotated = visualize_detections(img_path, detections, class_names)
+        if annotated:
+            annotated_images.append(annotated)
+            
+            if output_dir:
+                output_path = Path(output_dir)
+                output_path.mkdir(parents=True, exist_ok=True)
+                save_path = output_path / f"annotated_{img_path.name}"
+                annotated.save(save_path)
+                print(f"  Saved to {save_path}")
+    
+    return annotated_images
 
 
 if __name__ == '__main__':
