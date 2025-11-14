@@ -1,74 +1,54 @@
 import os
-import cv2
 import numpy as np
+import cv2
 import argparse
 from insightface.app import FaceAnalysis
-from numpy import dot
-from numpy.linalg import norm
 
-def cosine_similarity(a, b):
-    return dot(a, b) / (norm(a) * norm(b))
 
-def find_best_match(face_embedding, db, threshold=0.35):
-    best_name = "Unknown"
-    best_score = -1
-    for name in db.files:
-        db_emb = db[name]
-        score = cosine_similarity(face_embedding, db_emb)
-        if score > best_score:
-            best_score = score
-            best_name = name
-    if best_score < threshold:
-        best_name = "Unknown"
-    return best_name, best_score
-
-def recognize_faces_in_directory(data_dir, db_path="face_db.npz", threshold=0.35):
-    # Load face database
-    db = np.load(db_path)
-
-    # Initialize InsightFace
+def build_face_database(data_dir, save_path):
     app = FaceAnalysis(name="buffalo_l", providers=['CPUExecutionProvider'])
     app.prepare(ctx_id=0, det_size=(640, 640))
 
-    # Create processed folder
-    processed_dir = os.path.join(data_dir, "processed")
-    os.makedirs(processed_dir, exist_ok=True)
+    database = {}
 
-    # Iterate over all images in the folder
-    for img_name in os.listdir(data_dir):
-        img_path = os.path.join(data_dir, img_name)
-
-        if not os.path.isfile(img_path):
-            continue
-        if img_name.lower().endswith((".jpg", ".jpeg", ".png")) is False:
+    for person in os.listdir(data_dir):
+        folder_path = os.path.join(data_dir, person)
+        if not os.path.isdir(folder_path):
             continue
 
-        img = cv2.imread(img_path)
-        if img is None:
-            print(f"Could not read {img_path}")
+        embeddings = []
+
+        for img_name in os.listdir(folder_path):
+            img_path = os.path.join(folder_path, img_name)
+            img = cv2.imread(img_path)
+            if img is None:
+                continue
+
+            faces = app.get(img)
+            if len(faces) == 0:
+                continue
+
+            face = max(faces, key=lambda f: f.det_score)
+            embeddings.append(face.embedding)
+
+        if len(embeddings) == 0:
             continue
 
-        faces = app.get(img)
-        if len(faces) == 0:
-            print(f"No faces detected in {img_name}")
-        else:
-            for face in faces:
-                name, score = find_best_match(face.embedding, db, threshold)
-                box = face.bbox.astype(int)
-                cv2.rectangle(img, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
-                cv2.putText(img, f"{name}", (box[0], box[1]-10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2)
+        avg_emb = np.mean(np.array(embeddings), axis=0)
+        database[person] = avg_emb
 
-        output_path = os.path.join(processed_dir, img_name)
-        cv2.imwrite(output_path, img)
-        print(f"Saved annotated image to {output_path}")
+    np.savez(save_path, **database)
+    return database
+
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Batch face recognition on a folder using InsightFace embeddings.")
-    parser.add_argument("--data_dir", type=str, required=True, help="Directory containing images to process")
-    parser.add_argument("--db", type=str, default="face_db.npz", help="Face database npz path")
-    parser.add_argument("--threshold", type=float, default=0.35, help="Cosine similarity threshold")
+    parser = argparse.ArgumentParser(description="Build a face embedding database.")
+    parser.add_argument("--data_dir", type=str, required=True,
+                        help="Directory containing subfolders of person images.")
+    parser.add_argument("--save_path", type=str, default="face_db.npz",
+                        help="Output .npz file path.")
 
     args = parser.parse_args()
 
-    recognize_faces_in_directory(args.data_dir, db_path=args.db, threshold=args.threshold)
+    build_face_database(args.data_dir, args.save_path)
+    print(f"Database saved to {args.save_path}")
