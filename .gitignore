@@ -13,3 +13,5 @@
 *.mp4
 *.txt
 *.zip
+*.pth
+*npz
