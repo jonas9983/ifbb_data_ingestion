@@ -110,16 +110,22 @@ def main(args):
             box = track[:4].astype(int)
             track_id = int(track[4])
             
-            # If this is a new track ID, we need to recognize and label it
             if track_id not in track_id_to_name:
-                # Find the original 'face' object corresponding to this track's box
                 matched_face = find_face_for_track(faces, box)
-                
                 if matched_face:
-                    # Now we use the FaceRecognizer to get the name
                     name, score = recognizer.match(matched_face.embedding)
-                    track_id_to_name[track_id] = name # Save it in our memory
+                    track_id_to_name[track_id] = name
                     print(f"[New Track]: ID {track_id} has been recognized as {name}")
+            else:
+                # Re-recognize if currently unknown
+                if track_id_to_name[track_id] == "Unknown":
+                    matched_face = find_face_for_track(faces, box)
+                    if matched_face:
+                        name, score = recognizer.match(matched_face.embedding)
+                        # Only update if we get a confident match (not Unknown)
+                        if name != "Unknown":
+                            track_id_to_name[track_id] = name
+                            print(f"[Updated Track]: ID {track_id} updated from Unknown to {name}")
             
             # Get the name (either new or from memory)
             name = track_id_to_name.get(track_id, "Tracking...")
@@ -152,7 +158,7 @@ def main(args):
                     name_a = current_frame_tracks[id_a]['name']
                     name_b = current_frame_tracks[id_b]['name']
                     print("==================================================")
-                    print(f"🎉 POSITION SWAP DETECTED IN: {img_name}")
+                    print(f" POSITION SWAP DETECTED IN: {img_name}")
                     print(f"   Between: {name_a} (ID {id_a}) and {name_b} (ID {id_b})")
                     print(f"   Previous: {last_order}")
                     print(f"   New:      {current_order}")
