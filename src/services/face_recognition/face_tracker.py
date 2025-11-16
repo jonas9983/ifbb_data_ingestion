@@ -1,198 +1,299 @@
 import os
 import cv2
-import numpy as np
 import argparse
-from itertools import combinations
-from sort.sort import Sort
+from typing import Dict, List, Set, Tuple, Optional
 from src.services.face_recognition.face_recognizer import FaceRecognizer
 
 
-def calculate_iou(boxA, boxB):
-    """Calculates Intersection over Union (IoU) for two boxes."""
-    # [x1, y1, x2, y2]
-    xA = max(boxA[0], boxB[0])
-    yA = max(boxA[1], boxB[1])
-    xB = min(boxA[2], boxB[2])
-    yB = min(boxA[3], boxB[3])
-    
-    interArea = max(0, xB - xA + 1) * max(0, yB - yA + 1)
-    
-    boxAArea = (boxA[2] - boxA[0] + 1) * (boxA[3] - boxA[1] + 1)
-    boxBArea = (boxB[2] - boxB[0] + 1) * (boxB[3] - boxB[1] + 1)
-    
-    iou = interArea / float(boxAArea + boxBArea - interArea)
-    return iou
-
-
-def find_face_for_track(faces, track_box):
+class AthletePositionTracker:
     """
-    Finds the original InsightFace 'face' object that best matches
-    a SORT tracked box using IoU.
+    Tracks athlete positions on stage and detects when they swap places.
+    Uses face recognition without multi-object tracking (no SORT).
     """
-    best_iou = 0
-    best_face = None
     
-    for face in faces:
-        iou = calculate_iou(face.bbox, track_box)
-        if iou > best_iou:
-            best_iou = iou
-            best_face = face
+    def __init__(self, db_path: str, threshold: float = 0.35):
+        """
+        Initialize the tracker.
+        
+        Args:
+            db_path: Path to the face database (.npz file)
+            threshold: Recognition cosine similarity threshold
+        """
+        print("Loading FaceRecognizer...")
+        self.recognizer = FaceRecognizer(db_path, threshold=threshold)
+        print("Recognizer loaded.")
+        
+        # State tracking
+        self.last_frame_positions: Dict[str, float] = {}
+        self.all_athletes_seen: Set[str] = set()
+        self.frames_with_detection: int = 0
+        self.frames_processed: int = 0
+        
+    def detect_and_recognize_faces(self, img) -> List[Dict]:
+        """
+        Detect and recognize all faces in an image.
+        
+        Args:
+            img: OpenCV image
             
-    # We require a minimum IoU to consider it a match
-    if best_iou > 0.5:
-        return best_face
-    return None
+        Returns:
+            List of dicts with 'name', 'bbox', 'center_x', 'score'
+        """
+        faces = self.recognizer.app.get(img)
+        recognized_faces = []
+        
+        for face in faces:
+            name, score = self.recognizer.match(face.embedding)
+            
+            # Only track recognized athletes (skip Unknown)
+            if name != "Unknown":
+                bbox = face.bbox.astype(int)
+                center_x = (bbox[0] + bbox[2]) / 2
+                
+                recognized_faces.append({
+                    'name': name,
+                    'bbox': bbox,
+                    'center_x': center_x,
+                    'score': score
+                })
+                
+                # Track new athletes
+                if name not in self.all_athletes_seen:
+                    self.all_athletes_seen.add(name)
+                    print(f"[New Athlete Detected]: {name}")
+        
+        return recognized_faces
+    
+    def detect_position_swaps(
+        self, 
+        current_positions: Dict[str, float], 
+        frame_name: str
+    ) -> List[Tuple[str, str]]:
+        """
+        Detect if any athletes swapped positions since last frame.
+        
+        Args:
+            current_positions: Dict mapping athlete name to center_x position
+            frame_name: Name of current frame (for logging)
+            
+        Returns:
+            List of tuples (athlete_a, athlete_b) that swapped
+        """
+        swaps = []
+        
+        # Need at least 2 athletes in both frames
+        if len(self.last_frame_positions) < 2 or len(current_positions) < 2:
+            return swaps
+        
+        # Find athletes present in both frames
+        common_athletes = set(self.last_frame_positions.keys()) & set(current_positions.keys())
+        
+        if len(common_athletes) < 2:
+            return swaps
+        
+        # Check all pairs for position swaps
+        common_list = sorted(list(common_athletes))
+        
+        for i in range(len(common_list)):
+            for j in range(i + 1, len(common_list)):
+                athlete_a = common_list[i]
+                athlete_b = common_list[j]
+                
+                # Previous positions
+                prev_a = self.last_frame_positions[athlete_a]
+                prev_b = self.last_frame_positions[athlete_b]
+                
+                # Current positions
+                curr_a = current_positions[athlete_a]
+                curr_b = current_positions[athlete_b]
+                
+                # Check if relative order changed
+                prev_order = "A_left_of_B" if prev_a < prev_b else "B_left_of_A"
+                curr_order = "A_left_of_B" if curr_a < curr_b else "B_left_of_A"
+                
+                if prev_order != curr_order:
+                    print("=" * 60)
+                    print(f"🎉 POSITION SWAP DETECTED in: {frame_name}")
+                    print(f"   Between: {athlete_a} ↔ {athlete_b}")
+                    print(f"   Previous: {athlete_a} {'←' if prev_a < prev_b else '→'} {athlete_b}")
+                    print(f"   Current:  {athlete_a} {'←' if curr_a < curr_b else '→'} {athlete_b}")
+                    print("=" * 60)
+                    swaps.append((athlete_a, athlete_b))
+        
+        return swaps
+    
+    def draw_annotations(self, img, recognized_faces: List[Dict]):
+        """
+        Draw bounding boxes and labels on the image.
+        
+        Args:
+            img: OpenCV image (modified in-place)
+            recognized_faces: List of face data dicts
+        """
+        # Sort faces by x position (left to right)
+        recognized_faces.sort(key=lambda x: x['center_x'])
+        
+        for idx, face_data in enumerate(recognized_faces):
+            bbox = face_data['bbox']
+            name = face_data['name']
+            position = idx + 1  # 1-indexed position
+            
+            # Draw bounding box
+            cv2.rectangle(img, (bbox[0], bbox[1]), (bbox[2], bbox[3]), (0, 255, 0), 2)
+            
+            # Draw label with position number
+            label = f"#{position}: {name}"
+            
+            # Add background for text
+            (text_width, text_height), baseline = cv2.getTextSize(
+                label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
+            )
+            cv2.rectangle(
+                img,
+                (bbox[0], bbox[1] - text_height - 10),
+                (bbox[0] + text_width, bbox[1]),
+                (0, 255, 0),
+                -1
+            )
+            
+            # Draw text
+            cv2.putText(
+                img, label, (bbox[0], bbox[1] - 5),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2
+            )
+    
+    def process_frame(self, img, frame_name: str) -> List[Dict]:
+        """
+        Process a single frame: detect, recognize, check swaps, draw.
+        
+        Args:
+            img: OpenCV image
+            frame_name: Name of the frame (for logging)
+            
+        Returns:
+            List of recognized faces data
+        """
+        self.frames_processed += 1
+        
+        # Detect and recognize faces
+        recognized_faces = self.detect_and_recognize_faces(img)
+        
+        if len(recognized_faces) > 0:
+            self.frames_with_detection += 1
+        
+        # Build current positions dict
+        current_positions = {
+            face['name']: face['center_x'] 
+            for face in recognized_faces
+        }
+        
+        # Detect swaps
+        self.detect_position_swaps(current_positions, frame_name)
+        
+        # Update state (only if we detected faces)
+        if len(current_positions) > 0:
+            self.last_frame_positions = current_positions
+        
+        # Draw annotations
+        self.draw_annotations(img, recognized_faces)
+        
+        return recognized_faces
+    
+    def get_current_lineup(self) -> List[Tuple[int, str]]:
+        """
+        Get the current lineup from left to right.
+        
+        Returns:
+            List of (position, name) tuples sorted by position
+        """
+        sorted_athletes = sorted(
+            self.last_frame_positions.items(), 
+            key=lambda x: x[1]
+        )
+        return [(idx + 1, name) for idx, (name, _) in enumerate(sorted_athletes)]
+    
+    def print_summary(self):
+        """Print a summary of tracking results."""
+        print("\n" + "=" * 60)
+        print("📊 TRACKING SUMMARY")
+        print("=" * 60)
+        print(f"Frames processed: {self.frames_processed}")
+        print(f"Frames with recognized faces: {self.frames_with_detection}")
+        
+        if self.frames_processed > 0:
+            detection_rate = self.frames_with_detection / self.frames_processed * 100
+            print(f"Detection rate: {detection_rate:.1f}%")
+        
+        print(f"\nTotal unique athletes detected: {len(self.all_athletes_seen)}")
+        print("\nAthletes identified:")
+        for idx, athlete in enumerate(sorted(self.all_athletes_seen), 1):
+            print(f"  {idx}. {athlete}")
+        
+        if len(self.last_frame_positions) > 0:
+            print(f"\nFinal lineup (left to right):")
+            for position, name in self.get_current_lineup():
+                print(f"  Position {position}: {name}")
+        print("=" * 60)
 
 
 def main(args):
-    # 1. Initialize the FaceRecognizer
-    # We use this for both detection (app.get) and recognition (match)
-    print("Loading FaceRecognizer...")
-    recognizer = FaceRecognizer(args.db, threshold=args.threshold)
-    print("Recognizer loaded.")
-
-    # 2. Initialize the SORT tracker
-    # You can tune these parameters
-    # max_age: Frames to keep a "lost" track
-    # min_hits: Frames to wait before "confirming" a new track
-    tracker = Sort(max_age=20, min_hits=3, iou_threshold=0.3)
+    """Main function to process all frames in a directory."""
     
-    # --- State Variables ---
-    # This dictionary will map a track_id (from SORT) to a name (from FaceRecognizer)
-    track_id_to_name = {}
+    # Initialize tracker
+    tracker = AthletePositionTracker(args.db, threshold=args.threshold)
     
-    # This dictionary stores the relative order of pairs, e.g., {(1, 2): '1_left_of_2'}
-    last_known_relative_order = {}
-    
-    # --- Setup Output Directory ---
+    # Setup output directory
     processed_dir = os.path.join(args.data_dir, "processed")
     os.makedirs(processed_dir, exist_ok=True)
-
-    images = sorted(
-        [f for f in os.listdir(args.data_dir) if f.lower().endswith((".png", ".jpg", ".jpeg"))]
-    )
-
-    print(f"Starting processing on {len(images)} images...")
     
+    # Get all images
+    images = sorted(
+        [f for f in os.listdir(args.data_dir) 
+         if f.lower().endswith((".png", ".jpg", ".jpeg"))]
+    )
+    
+    print(f"Starting processing on {len(images)} images...")
+    print("=" * 60)
+    
+    # Process each frame
     for img_name in images:
         img_path = os.path.join(args.data_dir, img_name)
         img = cv2.imread(img_path)
+        
         if img is None:
             continue
-
-        # 1. DETECTION: Get all faces from InsightFace
-        # 'faces' is a list of [Face] objects. Each has .bbox, .det_score, .embedding
-        faces = recognizer.app.get(img)
         
-        # 2. TRACKING (Part A): Format detections for SORT
-        # SORT needs a numpy array of [x1, y1, x2, y2, score]
-        detections_for_sort = []
-        for face in faces:
-            detections_for_sort.append(list(face.bbox) + [face.det_score])
+        # Process frame
+        tracker.process_frame(img, img_name)
         
-        if len(detections_for_sort) == 0:
-            # If no faces, just update tracker with empty array and save image
-            tracker.update(np.empty((0, 5)))
-            cv2.imwrite(os.path.join(processed_dir, img_name), img)
-            continue
-            
-        detections_for_sort = np.array(detections_for_sort)
-
-        # 3. TRACKING (Part B): Update SORT
-        # 'tracked_objects' is a N x 5 array: [x1, y1, x2, y2, track_id]
-        tracked_objects = tracker.update(detections_for_sort)
-
-        # --- This holds the tracks visible in the *current* frame ---
-        current_frame_tracks = {}
-
-        # 4. RECOGNITION: Link Track IDs to Names
-        for track in tracked_objects:
-            box = track[:4].astype(int)
-            track_id = int(track[4])
-            
-            if track_id not in track_id_to_name:
-                matched_face = find_face_for_track(faces, box)
-                if matched_face:
-                    name, score = recognizer.match(matched_face.embedding)
-                    track_id_to_name[track_id] = name
-                    print(f"[New Track]: ID {track_id} has been recognized as {name}")
-            else:
-                # Re-recognize if currently unknown
-                if track_id_to_name[track_id] == "Unknown":
-                    matched_face = find_face_for_track(faces, box)
-                    if matched_face:
-                        name, score = recognizer.match(matched_face.embedding)
-                        # Only update if we get a confident match (not Unknown)
-                        if name != "Unknown":
-                            track_id_to_name[track_id] = name
-                            print(f"[Updated Track]: ID {track_id} updated from Unknown to {name}")
-            
-            # Get the name (either new or from memory)
-            name = track_id_to_name.get(track_id, "Tracking...")
-            
-            # Store data for swap detection and drawing
-            current_frame_tracks[track_id] = {
-                'name': name,
-                'center_x': (box[0] + box[2]) / 2,
-                'box': box
-            }
-
-        # 5. SWAP DETECTION
-        visible_track_ids = sorted(list(current_frame_tracks.keys()))
-        
-        if len(visible_track_ids) >= 2:
-            # Check all unique pairs of visible people
-            for id_a, id_b in combinations(visible_track_ids, 2):
-                pair_key = (id_a, id_b) # Always sorted (e.g., (1, 3))
-                
-                pos_a = current_frame_tracks[id_a]['center_x']
-                pos_b = current_frame_tracks[id_b]['center_x']
-                
-                # Determine current order
-                current_order = f"{id_a}_left_of_{id_b}" if pos_a < pos_b else f"{id_b}_left_of_{id_a}"
-                
-                # Compare to last known order
-                last_order = last_known_relative_order.get(pair_key)
-                
-                if last_order and current_order != last_order:
-                    name_a = current_frame_tracks[id_a]['name']
-                    name_b = current_frame_tracks[id_b]['name']
-                    print("==================================================")
-                    print(f" POSITION SWAP DETECTED IN: {img_name}")
-                    print(f"   Between: {name_a} (ID {id_a}) and {name_b} (ID {id_b})")
-                    print(f"   Previous: {last_order}")
-                    print(f"   New:      {current_order}")
-                    print("==================================================")
-
-                # Update the last known order for this pair
-                last_known_relative_order[pair_key] = current_order
-                
-        # 6. DRAWING
-        for track_id, data in current_frame_tracks.items():
-            box = data['box']
-            label = f"ID {track_id} ({data['name']})"
-            
-            cv2.rectangle(img, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
-            cv2.putText(img, label, (box[0], box[1] - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-
+        # Save processed image
         cv2.imwrite(os.path.join(processed_dir, img_name), img)
-
-    print("---")
-    print("Tracking and swap detection complete.")
-    print(f"Total unique people tracked: {len(track_id_to_name)}")
-    print("Track ID to Name mapping:")
-    for tid, name in track_id_to_name.items():
-        print(f"  ID {tid}: {name}")
+    
+    # Print summary
+    tracker.print_summary()
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Track faces using SORT and detect position swaps.")
+    parser = argparse.ArgumentParser(
+        description="Track athlete positions and detect swaps (no SORT)"
+    )
     
-    # Arguments from your original script
-    parser.add_argument("--data_dir", required=True, help="Directory containing image frames.")
-    parser.add_argument("--db", required=True, help="Path to the saved face database (.npz file).")
-    parser.add_argument("--threshold", type=float, default=0.35, help="Recognition cosine similarity threshold.")
+    parser.add_argument(
+        "--data_dir", 
+        required=True, 
+        help="Directory containing image frames."
+    )
+    parser.add_argument(
+        "--db", 
+        required=True, 
+        help="Path to the saved face database (.npz file)."
+    )
+    parser.add_argument(
+        "--threshold", 
+        type=float, 
+        default=0.35, 
+        help="Recognition cosine similarity threshold."
+    )
     
     args = parser.parse_args()
     main(args)
