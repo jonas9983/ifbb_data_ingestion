@@ -1,20 +1,14 @@
-"""
-athlete_position_tracker.py (REFACTORED)
-
-Main script that orchestrates detection and swap tracking.
-Uses modular components from detection.py and swap_detector.py
-"""
-
 import os
 import cv2
 import json
 import argparse
 from typing import Tuple, Optional
-from rfdetr import RFDETRMedium
-
 from src.services.face_recognition.face_recognizer import FaceRecognizer
-from src.services.face_recognition.detection import AthleteDetector
-from src.services.face_recognition.swap_detector import SwapDetector
+
+# Import our new modular components
+from detection import AthleteDetector
+from swap_detector import SwapDetector
+from rfdetr import RFDETRMedium
 
 
 class AthletePositionTracker:
@@ -39,6 +33,7 @@ class AthletePositionTracker:
         print("Loading RF-DETR person detector...")
         person_model = RFDETRMedium()
         person_model.optimize_for_inference()
+        print("Person detector loaded.")
         
         # Initialize modular components
         self.detector = AthleteDetector(
@@ -53,7 +48,8 @@ class AthletePositionTracker:
         img, 
         frame_name: str,
         frame_number: int,
-        show_person_bbox: bool = True
+        show_person_bbox: bool = True,
+        filter_front_row: bool = True
     ):
         """
         Process a single frame: detect, recognize, check swaps, draw.
@@ -63,12 +59,13 @@ class AthletePositionTracker:
             frame_name: Name of the frame (for logging)
             frame_number: Frame number in sequence
             show_person_bbox: Whether to draw person bounding boxes
+            filter_front_row: Whether to filter out back row athletes
             
         Returns:
             List of DetectedAthlete objects
         """
-        # Step 1: Detect and recognize athletes
-        detected_athletes = self.detector.detect_and_associate(img)
+        # Step 1: Detect and recognize athletes (with optional front row filtering)
+        detected_athletes = self.detector.detect_and_associate(img, filter_front_row)
         
         # Step 2: Build positions dict and check for swaps
         current_positions = {
@@ -151,8 +148,12 @@ def parse_frame_range(range_str: str) -> Tuple[Optional[int], Optional[int], int
 def main(args):
     """Main function to process all frames in a directory."""
     
-    # Initialize tracker (person_detector=None for now)
-    tracker = AthletePositionTracker(args.db, threshold=args.threshold)
+    # Initialize tracker with RF-DETR
+    tracker = AthletePositionTracker(
+        args.db, 
+        threshold=args.threshold,
+        confidence_threshold=args.confidence
+    )
     
     # Setup output directory
     processed_dir = os.path.join(args.data_dir, "processed")
@@ -228,6 +229,12 @@ if __name__ == "__main__":
         type=float, 
         default=0.35, 
         help="Recognition cosine similarity threshold."
+    )
+    parser.add_argument(
+        "--confidence",
+        type=float,
+        default=0.5,
+        help="Confidence threshold for person detection (RF-DETR)."
     )
     parser.add_argument(
         "--frame-range",

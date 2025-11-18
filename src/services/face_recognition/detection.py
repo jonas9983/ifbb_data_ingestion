@@ -9,7 +9,7 @@ import numpy as np
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 from PIL import Image
-
+from src.services.face_recognition.depth_detection import DepthAnalyzer
 
 @dataclass
 class DetectedAthlete:
@@ -25,7 +25,7 @@ class DetectedAthlete:
 class AthleteDetector:
     """
     Detects and recognizes athletes in frames.
-    Handles both face recognition and person detection with bounding box association.
+    Handles both face recognition and person detection with bbox association.
     """
     
     def __init__(self, face_recognizer, person_detector=None, confidence_threshold=0.5):
@@ -191,12 +191,13 @@ class AthleteDetector:
         
         return (x1_p <= center_x <= x2_p) and (y1_p <= center_y <= y2_p)
     
-    def detect_and_associate(self, img) -> List[DetectedAthlete]:
+    def detect_and_associate(self, img, filter_front_row: bool = False) -> List[DetectedAthlete]:
         """
         Full detection pipeline: detect faces, detect persons, associate them.
         
         Args:
             img: OpenCV image
+            filter_front_row: If True, only return front row athletes
             
         Returns:
             List of DetectedAthlete objects
@@ -237,6 +238,23 @@ class AthleteDetector:
             )
             
             detected_athletes.append(athlete)
+        
+        # Step 4: Filter for front row if requested
+        if filter_front_row and len(detected_athletes) > 0:
+            
+            frame_height = img.shape[0]
+            analyzer = DepthAnalyzer()
+            front_row, back_row = analyzer.filter_front_row_athletes(
+                detected_athletes, 
+                frame_height,
+                verbose=True
+            )
+            
+            if back_row:
+                print(f"  → Filtered out {len(back_row)} back row athlete(s): "
+                      f"{[a.name for a in back_row]}")
+            
+            return front_row
         
         return detected_athletes
     
