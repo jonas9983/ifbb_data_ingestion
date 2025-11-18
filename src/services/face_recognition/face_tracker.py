@@ -460,7 +460,7 @@ def main(args):
     tracker.print_summary()
     
     # Export events to JSON
-    events_path = os.path.join(args.data_dir, "tracking_events.json")
+    events_path = os.path.join(args.data_dir, "processed", "tracking_events.json")
     tracker.export_events(events_path)
 
 
@@ -486,7 +486,7 @@ if __name__ == "__main__":
         help="Recognition cosine similarity threshold."
     )
     parser.add_argument(
-        "--frame_range",
+        "--frame-range",
         type=str,
         default=None,
         help=(
