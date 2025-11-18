@@ -195,7 +195,7 @@ def main(args):
             img, 
             img_name, 
             frame_number,
-            show_person_bbox=True  # Set to False to hide person bboxes
+            show_person_bbox=True
         )
         
         # Save processed image

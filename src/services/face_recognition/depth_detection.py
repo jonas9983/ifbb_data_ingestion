@@ -49,13 +49,13 @@ class DepthAnalyzer:
         verbose: bool = False
     ) -> Tuple[List, List]:
         """
-        Robust filtering using Overlap Containment + Y-Axis Clustering.
+        Filtering using Overlap Containment + Y-Axis Clustering.
         """
         if not athletes:
             return [], []
                     
-        # Sort by area (largest first) to identify the "blockers"
-        sorted_indices = np.argsort([-self.calculate_bbox_area(self._get_bbox_coords(a)) for a in athletes])
+        # Sort by FEET POSITION (Y-max) instead of area
+        sorted_indices = np.argsort([-self._get_bbox_coords(a)[3] for a in athletes])
         
         valid_indices = []
         rejected_by_overlap = []
@@ -64,10 +64,10 @@ class DepthAnalyzer:
             current_bbox = self._get_bbox_coords(athletes[i])
             is_overlapped = False
             
-            # Check against already accepted larger athletes
+            # Check against already accepted athletes (who are more in front)
             for valid_idx in valid_indices:
-                larger_bbox = self._get_bbox_coords(athletes[valid_idx])
-                if self._is_contained(current_bbox, larger_bbox):
+                front_athlete_bbox = self._get_bbox_coords(athletes[valid_idx])
+                if self._is_contained(current_bbox, front_athlete_bbox):
                     is_overlapped = True
                     break
             
@@ -129,4 +129,3 @@ class DepthAnalyzer:
         except Exception as e:
             print(f"  [Depth] Clustering failed ({e}), falling back to all-front.")
             return candidates, rejected_by_overlap
-        
