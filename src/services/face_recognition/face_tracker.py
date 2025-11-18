@@ -1,8 +1,33 @@
 import os
 import cv2
+import json
 import argparse
 from typing import Dict, List, Set, Tuple, Optional
+from dataclasses import dataclass, asdict
+from datetime import datetime
 from src.services.face_recognition.face_recognizer import FaceRecognizer
+
+
+@dataclass
+class EventRecord:
+    """Represents a tracking event."""
+    frame_number: int
+    frame_name: str
+    timestamp: str
+    athletes: List[str]  # Ordered left to right
+    trigger: str
+    athletes_swapped: Optional[List[Tuple[str, str]]] = None
+    
+    def to_dict(self):
+        """Convert to dictionary for JSON serialization."""
+        data = asdict(self)
+        # Convert list of tuples to more readable format
+        if self.athletes_swapped:
+            data['athletes_swapped'] = [
+                {'athlete_1': a, 'athlete_2': b} 
+                for a, b in self.athletes_swapped
+            ]
+        return data
 
 
 class AthletePositionTracker:
@@ -28,6 +53,9 @@ class AthletePositionTracker:
         self.all_athletes_seen: Set[str] = set()
         self.frames_with_detection: int = 0
         self.frames_processed: int = 0
+        
+        # Event recording
+        self.events: List[EventRecord] = []
         
     def detect_and_recognize_faces(self, img) -> List[Dict]:
         """
@@ -162,13 +190,60 @@ class AthletePositionTracker:
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2
             )
     
-    def process_frame(self, img, frame_name: str) -> List[Dict]:
+    def get_ordered_athletes(self, recognized_faces: List[Dict]) -> List[str]:
+        """
+        Get list of athlete names ordered left to right.
+        
+        Args:
+            recognized_faces: List of face data dicts
+            
+        Returns:
+            List of athlete names sorted by position
+        """
+        sorted_faces = sorted(recognized_faces, key=lambda x: x['center_x'])
+        return [face['name'] for face in sorted_faces]
+    
+    def record_event(
+        self, 
+        frame_number: int,
+        frame_name: str,
+        athletes: List[str],
+        trigger: str,
+        swaps: Optional[List[Tuple[str, str]]] = None
+    ):
+        """
+        Record a tracking event.
+        
+        Args:
+            frame_number: Frame number in sequence
+            frame_name: Frame filename
+            athletes: List of athlete names (left to right)
+            trigger: Description of what triggered this event
+            swaps: List of (athlete_a, athlete_b) tuples that swapped
+        """
+        event = EventRecord(
+            frame_number=frame_number,
+            frame_name=frame_name,
+            timestamp=datetime.now().isoformat(),
+            athletes=athletes,
+            trigger=trigger,
+            athletes_swapped=swaps if swaps else None
+        )
+        self.events.append(event)
+    
+    def process_frame(
+        self, 
+        img, 
+        frame_name: str,
+        frame_number: int
+    ) -> List[Dict]:
         """
         Process a single frame: detect, recognize, check swaps, draw.
         
         Args:
             img: OpenCV image
             frame_name: Name of the frame (for logging)
+            frame_number: Frame number in sequence
             
         Returns:
             List of recognized faces data
@@ -187,8 +262,33 @@ class AthletePositionTracker:
             for face in recognized_faces
         }
         
+        # Get ordered athlete list
+        ordered_athletes = self.get_ordered_athletes(recognized_faces)
+        
         # Detect swaps
-        self.detect_position_swaps(current_positions, frame_name)
+        swaps = self.detect_position_swaps(current_positions, frame_name)
+        
+        # Record events
+        if swaps:
+            # Position change event
+            self.record_event(
+                frame_number=frame_number,
+                frame_name=frame_name,
+                athletes=ordered_athletes,
+                trigger="position_changed",
+                swaps=swaps
+            )
+        elif len(ordered_athletes) > 0:
+            # Check if this is a new lineup configuration
+            prev_lineup = self.get_current_lineup_names()
+            if ordered_athletes != prev_lineup:
+                # Athletes appeared/disappeared or changed
+                self.record_event(
+                    frame_number=frame_number,
+                    frame_name=frame_name,
+                    athletes=ordered_athletes,
+                    trigger="lineup_changed"
+                )
         
         # Update state (only if we detected faces)
         if len(current_positions) > 0:
@@ -201,7 +301,7 @@ class AthletePositionTracker:
     
     def get_current_lineup(self) -> List[Tuple[int, str]]:
         """
-        Get the current lineup from left to right.
+        Get the current lineup from left to right with positions.
         
         Returns:
             List of (position, name) tuples sorted by position
@@ -211,6 +311,41 @@ class AthletePositionTracker:
             key=lambda x: x[1]
         )
         return [(idx + 1, name) for idx, (name, _) in enumerate(sorted_athletes)]
+    
+    def get_current_lineup_names(self) -> List[str]:
+        """
+        Get the current lineup as a list of names (left to right).
+        
+        Returns:
+            List of athlete names sorted by position
+        """
+        sorted_athletes = sorted(
+            self.last_frame_positions.items(), 
+            key=lambda x: x[1]
+        )
+        return [name for name, _ in sorted_athletes]
+    
+    def export_events(self, output_path: str):
+        """
+        Export all recorded events to JSON file.
+        
+        Args:
+            output_path: Path to output JSON file
+        """
+        events_data = {
+            'summary': {
+                'total_frames_processed': self.frames_processed,
+                'frames_with_detection': self.frames_with_detection,
+                'total_athletes': len(self.all_athletes_seen),
+                'athletes': sorted(list(self.all_athletes_seen))
+            },
+            'events': [event.to_dict() for event in self.events]
+        }
+        
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(events_data, f, indent=2, ensure_ascii=False)
+        
+        print(f"\n✅ Events exported to: {output_path}")
     
     def print_summary(self):
         """Print a summary of tracking results."""
@@ -233,7 +368,45 @@ class AthletePositionTracker:
             print(f"\nFinal lineup (left to right):")
             for position, name in self.get_current_lineup():
                 print(f"  Position {position}: {name}")
+        
+        print(f"\nTotal events recorded: {len(self.events)}")
         print("=" * 60)
+
+
+def parse_frame_range(range_str: str) -> Tuple[Optional[int], Optional[int], int]:
+    """
+    Parse frame range string in format 'start:end:step'.
+    
+    Args:
+        range_str: String like '0:100:5' or '::10' or '50:150'
+        
+    Returns:
+        Tuple of (start, end, step) where None means use default
+        
+    Examples:
+        '0:100:5' -> (0, 100, 5)
+        '::10' -> (None, None, 10)
+        '50:150' -> (50, 150, 1)
+        '100' -> (100, None, 1)
+    """
+    parts = range_str.split(':')
+    
+    if len(parts) == 1:
+        # Single number means start from that frame
+        return (int(parts[0]) if parts[0] else None, None, 1)
+    elif len(parts) == 2:
+        # start:end
+        start = int(parts[0]) if parts[0] else None
+        end = int(parts[1]) if parts[1] else None
+        return (start, end, 1)
+    elif len(parts) == 3:
+        # start:end:step
+        start = int(parts[0]) if parts[0] else None
+        end = int(parts[1]) if parts[1] else None
+        step = int(parts[2]) if parts[2] else 1
+        return (start, end, step)
+    else:
+        raise ValueError(f"Invalid frame range format: {range_str}")
 
 
 def main(args):
@@ -247,30 +420,48 @@ def main(args):
     os.makedirs(processed_dir, exist_ok=True)
     
     # Get all images
-    images = sorted(
+    all_images = sorted(
         [f for f in os.listdir(args.data_dir) 
          if f.lower().endswith((".png", ".jpg", ".jpeg"))]
     )
     
-    print(f"Starting processing on {len(images)} images...")
+    # Parse frame range if provided
+    if args.frame_range:
+        start, end, step = parse_frame_range(args.frame_range)
+        start = start if start is not None else 0
+        end = end if end is not None else len(all_images)
+        images = all_images[start:end:step]
+        print(f"Processing frames {start} to {end} with step {step}")
+        print(f"Total frames to process: {len(images)} (out of {len(all_images)} total)")
+    else:
+        images = all_images
+        print(f"Processing all {len(images)} frames")
+    
     print("=" * 60)
     
     # Process each frame
-    for img_name in images:
+    for idx, img_name in enumerate(images):
         img_path = os.path.join(args.data_dir, img_name)
         img = cv2.imread(img_path)
         
         if img is None:
             continue
         
+        # Calculate actual frame number in original sequence
+        frame_number = all_images.index(img_name)
+        
         # Process frame
-        tracker.process_frame(img, img_name)
+        tracker.process_frame(img, img_name, frame_number)
         
         # Save processed image
         cv2.imwrite(os.path.join(processed_dir, img_name), img)
     
     # Print summary
     tracker.print_summary()
+    
+    # Export events to JSON
+    events_path = os.path.join(args.data_dir, "tracking_events.json")
+    tracker.export_events(events_path)
 
 
 if __name__ == "__main__":
@@ -293,6 +484,18 @@ if __name__ == "__main__":
         type=float, 
         default=0.35, 
         help="Recognition cosine similarity threshold."
+    )
+    parser.add_argument(
+        "--frame_range",
+        type=str,
+        default=None,
+        help=(
+            "Frame range to process in format 'start:end:step'. "
+            "Examples: '0:100:5' (frames 0-100, every 5th), "
+            "'::10' (all frames, every 10th), "
+            "'50:150' (frames 50-150, every frame), "
+            "'100' (start from frame 100 to end)"
+        )
     )
     
     args = parser.parse_args()
