@@ -1,7 +1,7 @@
 """
 detection.py
 
-Handles face recognition and person detection with bounding box association.
+Handles face recognition and person detection with instance segmentation association.
 """
 
 import cv2
@@ -16,27 +16,20 @@ class DetectedAthlete:
     """Represents a detected athlete with face and person information."""
     name: str
     face_bbox: List[int]  # [x1, y1, x2, y2]
-    person_bbox: Optional[List[int]]  # [x1, y1, x2, y2], None if not detected
+    person_bbox: Optional[List[int]]  # [x1, y1, x2, y2]
+    mask: Optional[np.ndarray] # Boolean or uint8 mask of the person
     center_x: float
     face_score: float
-    confidence: float = 1.0  # Confidence in the association
+    confidence: float = 1.0
 
 
 class AthleteDetector:
     """
     Detects and recognizes athletes in frames.
-    Handles both face recognition and person detection with bbox association.
+    Handles face recognition and RF-DETR Instance Segmentation.
     """
     
     def __init__(self, face_recognizer, person_detector=None, confidence_threshold=0.5):
-        """
-        Initialize the detector.
-        
-        Args:
-            face_recognizer: FaceRecognizer instance
-            person_detector: RF-DETR model instance (optional)
-            confidence_threshold: Confidence threshold for person detection
-        """
         self.face_recognizer = face_recognizer
         self.person_detector = person_detector
         self.confidence_threshold = confidence_threshold
@@ -57,7 +50,6 @@ class AthleteDetector:
         for face in faces:
             name, score = self.face_recognizer.match(face.embedding)
             
-            # Only track recognized athletes (skip Unknown)
             if name != "Unknown":
                 bbox = face.bbox.astype(int)
                 center_x = (bbox[0] + bbox[2]) / 2
@@ -73,13 +65,7 @@ class AthleteDetector:
     
     def detect_persons(self, img) -> List[Dict]:
         """
-        Detect person bounding boxes in the image using RF-DETR.
-        
-        Args:
-            img: OpenCV image (BGR format)
-            
-        Returns:
-            List of dicts with 'bbox', 'confidence', 'center_x'
+        Detect person masks and bboxes using RF-DETR Segmentation.
         """
         if self.person_detector is None:
             return []
@@ -89,27 +75,38 @@ class AthleteDetector:
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             image_pil = Image.fromarray(img_rgb)
             
-            # Run RF-DETR prediction
             detections = self.person_detector.predict(
                 image_pil, 
                 threshold=self.confidence_threshold
             )
             
-            # Extract person detections
             persons = []
             
-            # Get bounding boxes in xyxy format
+            # Check if we have detections
             if hasattr(detections, 'xyxy') and detections.xyxy is not None:
                 boxes = detections.xyxy
+                # Handle confidences safely
                 confidences = detections.confidence if hasattr(detections, 'confidence') else [1.0] * len(boxes)
                 
-                for bbox, conf in zip(boxes, confidences):
-                    # bbox is expected to be [x1, y1, x2, y2]
+                raw_masks = getattr(detections, 'mask', None)
+                
+                if raw_masks is not None:
+                    masks = raw_masks
+                else:
+                    # Fallback: detected a person, but no mask found (or model is box-only)
+                    masks = [None] * len(boxes)
+                    print("Warning: No masks returned by model. Is this a segmentation model?")
+
+                for i, (bbox, conf) in enumerate(zip(boxes, confidences)):
                     x1, y1, x2, y2 = map(int, bbox[:4])
                     center_x = (x1 + x2) / 2
                     
+                    # Safely get the mask for this index
+                    person_mask = masks[i] if i < len(masks) else None
+
                     persons.append({
                         'bbox': [x1, y1, x2, y2],
+                        'mask': person_mask,
                         'confidence': float(conf),
                         'center_x': center_x
                     })
@@ -118,37 +115,45 @@ class AthleteDetector:
             
         except Exception as e:
             print(f"Error in person detection: {e}")
+            import traceback
+            traceback.print_exc() # Print full error to see exactly where it fails
             return []
     
     def associate_face_with_person(
         self, 
         face_bbox: List[int], 
-        person_bboxes: List[Dict],
+        person_data_list: List[Dict],
         iou_threshold: float = 0.3
     ) -> Optional[Dict]:
         """
-        Associate a face bounding box with a person bounding box.
-        
-        Args:
-            face_bbox: [x1, y1, x2, y2] of face
-            person_bboxes: List of person detection dicts
-            iou_threshold: Minimum IoU to consider a match
-            
-        Returns:
-            Best matching person bbox dict or None
-            
-        Strategy: Find person bbox that contains/overlaps with face bbox
+        Associate face with person.
+        1. Check if face center is inside the Person Mask (Precision).
+        2. Fallback to BBox IoU/Containment if mask check fails.
         """
-        if not person_bboxes:
+        if not person_data_list:
             return None
         
+        # Calculate face center
+        face_cx = int((face_bbox[0] + face_bbox[2]) / 2)
+        face_cy = int((face_bbox[1] + face_bbox[3]) / 2)
+
+        # -- Mask Point Check ---
+        for person in person_data_list:
+            mask = person.get('mask')
+            if mask is not None:
+                # Ensure coordinates are within bounds
+                h, w = mask.shape[:2]
+                if 0 <= face_cx < w and 0 <= face_cy < h:
+                    # Check if the pixel at face center is part of the mask (True/255)
+                    if mask[face_cy, face_cx] > 0:
+                        return person
+
+        # --- BBox Fallback (Original Logic) ---
         best_match = None
         best_iou = iou_threshold
         
-        for person in person_bboxes:
+        for person in person_data_list:
             iou = self._calculate_iou(face_bbox, person['bbox'])
-            
-            # Also check if face is contained within person bbox
             contained = self._is_contained(face_bbox, person['bbox'])
             
             if contained or iou > best_iou:
@@ -158,11 +163,10 @@ class AthleteDetector:
         return best_match
     
     def _calculate_iou(self, bbox1: List[int], bbox2: List[int]) -> float:
-        """Calculate Intersection over Union between two bboxes."""
+        """ Calculate Intersection over Union."""
         x1_1, y1_1, x2_1, y2_1 = bbox1
         x1_2, y1_2, x2_2, y2_2 = bbox2
         
-        # Calculate intersection
         x1_i = max(x1_1, x1_2)
         y1_i = max(y1_1, y1_2)
         x2_i = min(x2_1, x2_2)
@@ -172,8 +176,6 @@ class AthleteDetector:
             return 0.0
         
         intersection = (x2_i - x1_i) * (y2_i - y1_i)
-        
-        # Calculate union
         area1 = (x2_1 - x1_1) * (y2_1 - y1_1)
         area2 = (x2_2 - x1_2) * (y2_2 - y1_2)
         union = area1 + area2 - intersection
@@ -181,79 +183,61 @@ class AthleteDetector:
         return intersection / union if union > 0 else 0.0
     
     def _is_contained(self, face_bbox: List[int], person_bbox: List[int]) -> bool:
-        """Check if face bbox is contained within person bbox."""
+        """ Check if face bbox is contained within person bbox."""
         x1_f, y1_f, x2_f, y2_f = face_bbox
         x1_p, y1_p, x2_p, y2_p = person_bbox
-        
-        # Face center should be within person bbox
         center_x = (x1_f + x2_f) / 2
         center_y = (y1_f + y2_f) / 2
-        
         return (x1_p <= center_x <= x2_p) and (y1_p <= center_y <= y2_p)
     
     def detect_and_associate(self, img, filter_front_row: bool = False) -> List[DetectedAthlete]:
         """
-        Full detection pipeline: detect faces, detect persons, associate them.
-        
-        Args:
-            img: OpenCV image
-            filter_front_row: If True, only return front row athletes
-            
-        Returns:
-            List of DetectedAthlete objects
+        Full detection pipeline.
         """
-        # Step 1: Detect and recognize faces
+        # 1. Faces
         faces = self.detect_faces(img)
         
-        # Step 2: Detect persons
+        # 2. Persons (Masks + Boxes)
         persons = self.detect_persons(img)
         
-        # Step 3: Associate faces with person bboxes
         detected_athletes = []
-        used_person_indices = set()
         
         for face in faces:
-            # Try to find matching person bbox
             best_person = self.associate_face_with_person(
                 face['bbox'], 
                 persons
             )
             
+            person_bbox = None
+            person_mask = None
+            confidence = 1.0
+
             if best_person:
                 person_bbox = best_person['bbox']
-                # Mark this person as used (avoid duplicate associations)
-                if best_person in persons:
-                    idx = persons.index(best_person)
-                    used_person_indices.add(idx)
-            else:
-                person_bbox = None
+                person_mask = best_person['mask']
+                confidence = best_person['confidence']
             
             athlete = DetectedAthlete(
                 name=face['name'],
                 face_bbox=face['bbox'].tolist() if hasattr(face['bbox'], 'tolist') else face['bbox'],
                 person_bbox=person_bbox,
+                mask=person_mask,  # Store the mask
                 center_x=face['center_x'],
                 face_score=face['score'],
-                confidence=best_person['confidence'] if best_person else 1.0
+                confidence=confidence
             )
             
             detected_athletes.append(athlete)
         
-        # Step 4: Filter for front row if requested
+        # Filter logic handles the DepthAnalyzer
         if filter_front_row and len(detected_athletes) > 0:
-            
             frame_height = img.shape[0]
             analyzer = DepthAnalyzer()
-            front_row, back_row = analyzer.filter_front_row_athletes(
+            front_row, _ = analyzer.filter_front_row_athletes(
                 detected_athletes, 
                 frame_height,
                 verbose=True
             )
-            
-            if back_row:
-                print(f"  → Filtered out {len(back_row)} back row athlete(s): "
-                      f"{[a.name for a in back_row]}")
-            
             return front_row
         
         return detected_athletes
@@ -265,47 +249,56 @@ class AthleteDetector:
         show_person_bbox: bool = True
     ):
         """
-        Draw bounding boxes and labels on the image.
-        
-        Args:
-            img: OpenCV image (modified in-place)
-            athletes: List of DetectedAthlete objects
-            show_person_bbox: Whether to draw person bboxes
+        Draw bounding boxes and SEGMENTATION MASKS on the image.
         """
-        # Sort athletes by x position (left to right)
+        # Create an overlay for transparency
+        overlay = img.copy()
+        alpha = 0.4  # Transparency factor
+        
         sorted_athletes = sorted(athletes, key=lambda x: x.center_x)
         
         for idx, athlete in enumerate(sorted_athletes):
-            position = idx + 1  # 1-indexed position
+            position = idx + 1
             
-            # Draw person bbox if available (in blue)
+            # --- Draw Mask Overlay ---
+            if athlete.mask is not None:
+                # Define colors (Blue-ish for masks)
+                color = (255, 100, 0) # BGR: Blue
+                
+                # If mask is boolean, convert to uint8
+                mask_uint8 = athlete.mask
+                if mask_uint8.dtype == bool:
+                    mask_uint8 = mask_uint8.astype(np.uint8) * 255
+                
+                contours, _ = cv2.findContours(mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                cv2.drawContours(overlay, contours, -1, color, -1) # Fill
+                cv2.drawContours(img, contours, -1, (255, 255, 255), 2) # White border on main img
+            
+            # Draw person bbox if requested (optional now that we have masks)
             if show_person_bbox and athlete.person_bbox:
                 p_bbox = athlete.person_bbox
                 cv2.rectangle(
                     img, 
                     (p_bbox[0], p_bbox[1]), 
                     (p_bbox[2], p_bbox[3]), 
-                    (255, 0, 0),  # Blue
-                    2
+                    (255, 100, 0), 
+                    1
                 )
             
-            # Draw face bbox (in green)
+            # Draw face bbox (Green)
             f_bbox = athlete.face_bbox
             cv2.rectangle(
                 img, 
                 (f_bbox[0], f_bbox[1]), 
                 (f_bbox[2], f_bbox[3]), 
-                (0, 255, 0),  # Green
+                (0, 255, 0), 
                 2
             )
             
-            # Draw label with position number
+            # Label
             label = f"#{position}: {athlete.name}"
+            (text_width, text_height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
             
-            # Add background for text
-            (text_width, text_height), baseline = cv2.getTextSize(
-                label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
-            )
             cv2.rectangle(
                 img,
                 (f_bbox[0], f_bbox[1] - text_height - 10),
@@ -313,9 +306,10 @@ class AthleteDetector:
                 (0, 255, 0),
                 -1
             )
-            
-            # Draw text
             cv2.putText(
                 img, label, (f_bbox[0], f_bbox[1] - 5),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2
             )
+
+        # Apply the transparent overlay
+        cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, img)

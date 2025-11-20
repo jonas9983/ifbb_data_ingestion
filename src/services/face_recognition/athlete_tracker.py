@@ -1,3 +1,7 @@
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning, module="sklearn")
+warnings.filterwarnings("ignore", message=".*rcond.*")
+
 import os
 import cv2
 import json
@@ -8,34 +12,20 @@ from src.services.face_recognition.face_recognizer import FaceRecognizer
 # Import our new modular components
 from detection import AthleteDetector
 from swap_detector import SwapDetector
-from rfdetr import RFDETRMedium
-
+from yolo_segmentation import YOLOSegmentationModel 
 
 class AthletePositionTracker:
-    """
-    Main tracker that orchestrates detection and swap detection.
-    Refactored to use modular components.
-    """
-    
     def __init__(self, db_path: str, threshold: float = 0.35, confidence_threshold: float = 0.5):
-        """
-        Initialize the tracker.
-        
-        Args:
-            db_path: Path to the face database (.npz file)
-            threshold: Recognition cosine similarity threshold
-            confidence_threshold: Confidence threshold for person detection
-        """
         print("Loading FaceRecognizer...")
         face_recognizer = FaceRecognizer(db_path, threshold=threshold)
         print("Recognizer loaded.")
         
-        print("Loading RF-DETR person detector...")
-        person_model = RFDETRMedium()
-        person_model.optimize_for_inference()
-        print("Person detector loaded.")
+        # --- Initialize YOLO ---
+        print("Loading YOLOv8 Segmentation...")
+        # Using 'l' (large) for best accuracy on stage, use 'm' for speed
+        person_model = YOLOSegmentationModel(model_size='l') 
+        print("Person segmentation model loaded.")
         
-        # Initialize modular components
         self.detector = AthleteDetector(
             face_recognizer, 
             person_model, 
@@ -51,36 +41,21 @@ class AthletePositionTracker:
         show_person_bbox: bool = True,
         filter_front_row: bool = True
     ):
-        """
-        Process a single frame: detect, recognize, check swaps, draw.
-        
-        Args:
-            img: OpenCV image
-            frame_name: Name of the frame (for logging)
-            frame_number: Frame number in sequence
-            show_person_bbox: Whether to draw person bounding boxes
-            filter_front_row: Whether to filter out back row athletes
-            
-        Returns:
-            List of DetectedAthlete objects
-        """
-        # Step 1: Detect and recognize athletes (with optional front row filtering)
+        # ... (No changes needed here, logic is handled in detector) ...
         detected_athletes = self.detector.detect_and_associate(img, filter_front_row)
         
-        # Step 2: Build positions dict and check for swaps
         current_positions = {
             athlete.name: athlete.center_x 
             for athlete in detected_athletes
         }
         
-        # Step 3: Update swap detector state
         self.swap_detector.update_state(
             current_positions,
             frame_name,
             frame_number
         )
         
-        # Step 4: Draw annotations
+        # Annotations now include masks
         self.detector.draw_annotations(img, detected_athletes, show_person_bbox)
         
         return detected_athletes
