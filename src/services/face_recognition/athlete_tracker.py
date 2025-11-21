@@ -9,7 +9,7 @@ import argparse
 from typing import Tuple, Optional
 from src.services.face_recognition.face_recognizer import FaceRecognizer
 
-# Import our new modular components
+# Import modular components
 from detection import AthleteDetector
 from swap_detector import SwapDetector
 from yolo_segmentation import YOLOSegmentationModel 
@@ -40,11 +40,16 @@ class AthletePositionTracker:
         filter_front_row: bool = True
     ):
         
-        detected_athletes = self.detector.detect_and_associate(img, filter_front_row)
+        # 1. Detect ALL athletes (Front and Back)
+        # The detector now marks them with .is_front_row = True/False
+        all_athletes = self.detector.detect_and_associate(img, check_depth=filter_front_row)
+        
+        # 2. Filter: We only want to track SWAPS for the front row
+        front_row_athletes = [a for a in all_athletes if a.is_front_row]
         
         current_positions = {
             athlete.name: athlete.center_x 
-            for athlete in detected_athletes
+            for athlete in front_row_athletes
         }
         
         self.swap_detector.update_state(
@@ -53,18 +58,13 @@ class AthletePositionTracker:
             frame_number
         )
         
-        # Annotations now include masks
-        self.detector.draw_annotations(img, detected_athletes, show_person_bbox)
+        # 3. Visualize: We want to see EVERYONE (Green for front, Red for back)
+        self.detector.draw_annotations(img, all_athletes, show_person_bbox)
         
-        return detected_athletes
+        return all_athletes
     
     def export_events(self, output_path: str):
-        """
-        Export all recorded events to JSON file.
-        
-        Args:
-            output_path: Path to output JSON file
-        """
+        """Export all recorded events to JSON file."""
         stats = self.swap_detector.get_statistics()
         
         events_data = {
@@ -83,33 +83,16 @@ class AthletePositionTracker:
 
 
 def parse_frame_range(range_str: str) -> Tuple[Optional[int], Optional[int], int]:
-    """
-    Parse frame range string in format 'start:end:step'.
-    
-    Args:
-        range_str: String like '0:100:5' or '::10' or '50:150'
-        
-    Returns:
-        Tuple of (start, end, step) where None means use default
-        
-    Examples:
-        '0:100:5' -> (0, 100, 5)
-        '::10' -> (None, None, 10)
-        '50:150' -> (50, 150, 1)
-        '100' -> (100, None, 1)
-    """
+    """Parse frame range string in format 'start:end:step'."""
     parts = range_str.split(':')
     
     if len(parts) == 1:
-        # Single number means start from that frame
         return (int(parts[0]) if parts[0] else None, None, 1)
     elif len(parts) == 2:
-        # start:end
         start = int(parts[0]) if parts[0] else None
         end = int(parts[1]) if parts[1] else None
         return (start, end, 1)
     elif len(parts) == 3:
-        # start:end:step
         start = int(parts[0]) if parts[0] else None
         end = int(parts[1]) if parts[1] else None
         step = int(parts[2]) if parts[2] else 1
@@ -121,7 +104,7 @@ def parse_frame_range(range_str: str) -> Tuple[Optional[int], Optional[int], int
 def main(args):
     """Main function to process all frames in a directory."""
     
-    # Initialize tracker with RF-DETR
+    # Initialize tracker
     tracker = AthletePositionTracker(
         args.db, 
         threshold=args.threshold,
@@ -168,7 +151,8 @@ def main(args):
             img, 
             img_name, 
             frame_number,
-            show_person_bbox=True
+            show_person_bbox=True,
+            filter_front_row=True
         )
         
         # Save processed image
@@ -187,40 +171,11 @@ if __name__ == "__main__":
         description="Track athlete positions and detect swaps (Refactored)"
     )
     
-    parser.add_argument(
-        "--data_dir", 
-        required=True, 
-        help="Directory containing image frames."
-    )
-    parser.add_argument(
-        "--db", 
-        required=True, 
-        help="Path to the saved face database (.npz file)."
-    )
-    parser.add_argument(
-        "--threshold", 
-        type=float, 
-        default=0.35, 
-        help="Recognition cosine similarity threshold."
-    )
-    parser.add_argument(
-        "--confidence",
-        type=float,
-        default=0.5,
-        help="Confidence threshold for person detection (RF-DETR)."
-    )
-    parser.add_argument(
-        "--frame-range",
-        type=str,
-        default=None,
-        help=(
-            "Frame range to process in format 'start:end:step'. "
-            "Examples: '0:100:5' (frames 0-100, every 5th), "
-            "'::10' (all frames, every 10th), "
-            "'50:150' (frames 50-150, every frame), "
-            "'100' (start from frame 100 to end)"
-        )
-    )
+    parser.add_argument("--data_dir", required=True, help="Directory containing image frames.")
+    parser.add_argument("--db", required=True, help="Path to the saved face database (.npz file).")
+    parser.add_argument("--threshold", type=float, default=0.35, help="Recognition cosine similarity threshold.")
+    parser.add_argument("--confidence", type=float, default=0.5, help="Confidence threshold for person detection.")
+    parser.add_argument("--frame-range", type=str, default=None, help="Frame range 'start:end:step'")
     
     args = parser.parse_args()
     main(args)

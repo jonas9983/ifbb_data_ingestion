@@ -1,161 +1,156 @@
 import numpy as np
-import cv2
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Any
 from sklearn.cluster import KMeans
 
 class DepthAnalyzer:
     """
     Determines if athletes are in the front row or back row using
-    Y-Max (Feet) clustering and Mask Containment checks.
+    Y-Max (Feet) clustering and Segmentation Mask Containment checks.
     """
     
     def __init__(self):
-        # Mask overlap is usually very low for two distinct people (even if one is behind)
-        # BBox overlap is usually high. We lower the threshold for masks.
-        self.containment_threshold = 0.6 
-        self.mask_overlap_threshold = 0.4 # If > 40% of pixels overlap, it's likely the same person
+        # If > 40% of a person's mask is covered by someone else, they are in back.
+        self.mask_overlap_threshold = 0.4 
+        
+        # Fallback for bounding boxes if masks fail
+        self.bbox_overlap_threshold = 0.6 
 
-    def _get_bbox_coords(self, athlete):
-        """Helper to safely get bbox [x1, y1, x2, y2]."""
-        # Prefer person body box, fallback to face
+    def _get_feet_y(self, athlete: Any) -> int:
+        """Returns the Y-coordinate of the athlete's feet (bottom of bbox)."""
         bbox = athlete.person_bbox if athlete.person_bbox else athlete.face_bbox
-        return bbox
+        return bbox[3] # y2
 
-    def calculate_bbox_area(self, bbox: List[int]) -> float:
-        return (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+    def _get_bbox(self, athlete: Any) -> List[int]:
+        return athlete.person_bbox if athlete.person_bbox else athlete.face_bbox
 
-    def _is_contained(self, inner_athlete, outer_athlete) -> bool:
+    def _is_behind(self, inner_athlete: Any, outer_athlete: Any) -> bool:
         """
-        Check if inner_athlete is significantly overlapping/inside outer_athlete.
-        PRIORITY: Uses Segmentation Masks (Pixel Perfect).
-        FALLBACK: Uses Bounding Boxes (Rectangle Approximation).
+        Check if inner_athlete is physically behind outer_athlete.
+        Priority: Segmentation Masks. Fallback: Bounding Boxes.
         """
-        # --- STRATEGY 1: MASK BASED CHECK (ACCURATE) ---
+        # --- STRATEGY 1: MASK BASED CHECK (Pixel Perfect) ---
         if inner_athlete.mask is not None and outer_athlete.mask is not None:
-            mask1 = inner_athlete.mask
-            mask2 = outer_athlete.mask
-            
-            # Ensure masks are boolean or binary
-            m1_bool = (mask1 > 0)
-            m2_bool = (mask2 > 0)
+            mask_inner = (inner_athlete.mask > 0)
+            mask_outer = (outer_athlete.mask > 0)
             
             # Calculate Intersection (pixels shared by both)
-            intersection = np.logical_and(m1_bool, m2_bool).sum()
-            
-            # Calculate Area of the "Inner" (smaller/tested) person
-            inner_area = m1_bool.sum()
+            intersection = np.logical_and(mask_inner, mask_outer).sum()
+            inner_area = mask_inner.sum()
             
             if inner_area == 0:
                 return False
                 
             overlap_ratio = intersection / inner_area
             
-            # With masks, real people rarely overlap more than 10-20% even if standing close.
-            # If overlap is > 40%, it's likely a double detection of the same person.
+            # If significant overlap, the smaller/inner one is likely behind
             return overlap_ratio > self.mask_overlap_threshold
 
         # --- STRATEGY 2: BBOX FALLBACK ---
-        inner_bbox = self._get_bbox_coords(inner_athlete)
-        outer_bbox = self._get_bbox_coords(outer_athlete)
+        in_box = self._get_bbox(inner_athlete)
+        out_box = self._get_bbox(outer_athlete)
         
-        ix1 = max(inner_bbox[0], outer_bbox[0])
-        iy1 = max(inner_bbox[1], outer_bbox[1])
-        ix2 = min(inner_bbox[2], outer_bbox[2])
-        iy2 = min(inner_bbox[3], outer_bbox[3])
+        ix1 = max(in_box[0], out_box[0])
+        iy1 = max(in_box[1], out_box[1])
+        ix2 = min(in_box[2], out_box[2])
+        iy2 = min(in_box[3], out_box[3])
 
         if ix1 >= ix2 or iy1 >= iy2:
             return False
 
         intersection_area = (ix2 - ix1) * (iy2 - iy1)
-        inner_area = self.calculate_bbox_area(inner_bbox)
+        inner_area = (in_box[2] - in_box[0]) * (in_box[3] - in_box[1])
         
         if inner_area > 0:
-            overlap_ratio = intersection_area / inner_area
-            return overlap_ratio > self.containment_threshold
+            return (intersection_area / inner_area) > self.bbox_overlap_threshold
             
         return False
 
     def filter_front_row_athletes(
         self,
-        athletes: List,
+        athletes: List[Any],
         frame_height: int,
         verbose: bool = False
-    ) -> Tuple[List, List]:
+    ) -> Tuple[List[Any], List[Any]]:
         """
-        Filtering using Overlap Containment + Y-Axis Clustering.
+        Splits athletes into [front_row, back_row] based on:
+        1. Physical Overlap (One person blocking another)
+        2. Y-Axis Position (Feet position clustering)
         """
         if not athletes:
             return [], []
-                    
-        # Sort by FEET POSITION (Y-max) - Lowest on screen (highest Y value) first
-        sorted_indices = np.argsort([-self._get_bbox_coords(a)[3] for a in athletes])
         
-        valid_indices = []
+        # --- STEP 1: Overlap / Containment Check ---
+        # Sort by Feet Position (Highest Y value first -> Closest to camera)
+        # We want to check if the people "in back" are covered by people "in front"
+        sorted_indices = np.argsort([-self._get_feet_y(a) for a in athletes])
+        
+        valid_front_indices = []
         rejected_by_overlap = []
         
         for i in sorted_indices:
             current_athlete = athletes[i]
-            is_overlapped = False
+            is_hidden = False
             
-            # Check against already accepted athletes (who are more in front)
-            for valid_idx in valid_indices:
+            # Check if this person is hidden behind anyone currently deemed "in front"
+            for valid_idx in valid_front_indices:
                 front_athlete = athletes[valid_idx]
                 
-                # CHANGED: Pass full objects to check masks, not just boxes
-                if self._is_contained(current_athlete, front_athlete):
-                    is_overlapped = True
+                if self._is_behind(current_athlete, front_athlete):
+                    is_hidden = True
+                    if verbose:
+                        print(f"  [Depth] Overlap detected: {current_athlete.name} is behind {front_athlete.name}")
                     break
             
-            if is_overlapped:
-                rejected_by_overlap.append(athletes[i])
+            if is_hidden:
+                rejected_by_overlap.append(current_athlete)
             else:
-                valid_indices.append(i)
+                valid_front_indices.append(i)
 
-        # These are the candidates after removing heavy overlaps
-        candidates = [athletes[i] for i in valid_indices]
+        # Candidates for front row after removing physically blocked people
+        candidates = [athletes[i] for i in valid_front_indices]
         
-        if verbose and rejected_by_overlap:
-            print(f"  [Depth] Removed due to overlap: {[a.name for a in rejected_by_overlap]}")
-
         if len(candidates) < 2:
+            # Not enough people to cluster, return what we have
             return candidates, rejected_by_overlap
 
-        # --- STEP 2: Clustering based on 'Feet' position (Y-Max) ---
-        
-        y_max_values = []
-        for a in candidates:
-            bbox = self._get_bbox_coords(a)
-            y_max_values.append(bbox[3]) 
-            
-        y_max_values = np.array(y_max_values).reshape(-1, 1)
+        # --- STEP 2: Clustering based on Feet Position (Y-Max) ---
+        y_max_values = np.array([self._get_feet_y(a) for a in candidates]).reshape(-1, 1)
 
-        # Check variance (if everyone is standing on the same line)
-        y_range = np.max(y_max_values) - np.min(y_max_values)
-        if y_range < (frame_height * 0.05):
-            if verbose: print("  [Depth] Variance low, assuming single row.")
+        # Calculate spread of feet positions
+        y_spread = np.max(y_max_values) - np.min(y_max_values)
+        
+        # If feet are within 5% of frame height, assume they are in one line (single row)
+        if y_spread < (frame_height * 0.05):
+            if verbose: print(f"  [Depth] Low Y-variance ({y_spread}px), assuming single row.")
             return candidates, rejected_by_overlap
 
         try:
+            if verbose: print(f"  [Depth] High Y-variance ({y_spread}px), clustering...")
+            
+            # K-Means with 2 clusters (Front Row vs Back Row)
             kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
             labels = kmeans.fit_predict(y_max_values)
             
+            # Identify which cluster is "Front"
+            # Higher Y-pixel value = Lower on screen = Closer to camera
             center_0 = kmeans.cluster_centers_[0][0]
             center_1 = kmeans.cluster_centers_[1][0]
             
-            # Larger Y value = Lower on screen = Front Row
             front_label = 0 if center_0 > center_1 else 1
             
-            front_row = []
-            back_row = list(rejected_by_overlap) 
+            final_front_row = []
+            final_back_row = list(rejected_by_overlap) # Start with overlapped people
             
             for i, athlete in enumerate(candidates):
                 if labels[i] == front_label:
-                    front_row.append(athlete)
+                    final_front_row.append(athlete)
                 else:
-                    back_row.append(athlete)
+                    final_back_row.append(athlete)
+                    if verbose:
+                        print(f"  [Depth] Clustering moved {athlete.name} to back row (Y={self._get_feet_y(athlete)})")
                     
-            return front_row, back_row
+            return final_front_row, final_back_row
 
         except Exception as e:
-            print(f"  [Depth] Clustering failed ({e}), falling back to all-front.")
+            print(f"  [Depth] Clustering failed ({e}), defaulting to overlap check only.")
             return candidates, rejected_by_overlap
