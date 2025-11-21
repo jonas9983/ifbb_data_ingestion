@@ -126,41 +126,60 @@ class AthleteDetector:
         iou_threshold: float = 0.3
     ) -> Optional[Dict]:
         """
-        Associate face with person.
-        1. Check if face center is inside the Person Mask (Precision).
-        2. Fallback to BBox IoU/Containment if mask check fails.
+        Associate face with person using:
+        1. Mask point check (if mask exists)
+        2. BBox proximity check
+        3. Y-axis consistency (face should be in upper portion of body)
         """
         if not person_data_list:
             return None
         
-        # Calculate face center
         face_cx = int((face_bbox[0] + face_bbox[2]) / 2)
         face_cy = int((face_bbox[1] + face_bbox[3]) / 2)
+        face_y_max = face_bbox[3]  # Bottom of face bbox
 
-        # -- Mask Point Check ---
+        # --- Mask Point Check ---
         for person in person_data_list:
             mask = person.get('mask')
             if mask is not None:
-                # Ensure coordinates are within bounds
                 h, w = mask.shape[:2]
                 if 0 <= face_cx < w and 0 <= face_cy < h:
-                    # Check if the pixel at face center is part of the mask (True/255)
                     if mask[face_cy, face_cx] > 0:
-                        return person
+                        # Face should be in upper half of person bbox
+                        person_bbox = person['bbox']
+                        person_height = person_bbox[3] - person_bbox[1]
+                        face_relative_y = face_y_max - person_bbox[1]
+                        
+                        # Face should be in top 60% of body (not near feet)
+                        if face_relative_y < (person_height * 0.6):
+                            return person
 
-        # --- BBox Fallback (Original Logic) ---
+        # --- BBox Fallback with Depth Check ---
         best_match = None
-        best_iou = iou_threshold
+        best_score = 0
         
         for person in person_data_list:
-            iou = self._calculate_iou(face_bbox, person['bbox'])
-            contained = self._is_contained(face_bbox, person['bbox'])
+            person_bbox = person['bbox']
             
-            if contained or iou > best_iou:
-                best_iou = iou
-                best_match = person
+            # 1. Calculate IoU
+            iou = self._calculate_iou(face_bbox, person_bbox)
+            contained = self._is_contained(face_bbox, person_bbox)
+            
+            # 2. Check vertical alignment (face should be in upper body)
+            person_height = person_bbox[3] - person_bbox[1]
+            face_relative_y = face_y_max - person_bbox[1]
+            vertical_ratio = face_relative_y / person_height if person_height > 0 else 1.0
+            
+            # 3. Scoring: Prefer matches where face is in upper body
+            if contained or iou > iou_threshold:
+                # Penalize if face is too low in the body (likely wrong association)
+                score = iou * (1.0 - max(0, vertical_ratio - 0.6))
+                
+                if score > best_score:
+                    best_score = score
+                    best_match = person
         
-        return best_match
+        return best_match if best_score > 0.1 else None
     
     def _calculate_iou(self, bbox1: List[int], bbox2: List[int]) -> float:
         """ Calculate Intersection over Union."""
@@ -233,14 +252,36 @@ class AthleteDetector:
         if filter_front_row and len(detected_athletes) > 0:
             frame_height = img.shape[0]
             analyzer = DepthAnalyzer()
-            front_row, _ = analyzer.filter_front_row_athletes(
+            front_row, back_row = analyzer.filter_front_row_athletes(
                 detected_athletes, 
                 frame_height,
                 verbose=True
             )
+
+            self.visualize_depth_decision(img = img, front_row= front_row, back_row= back_row)
             return front_row
         
         return detected_athletes
+    
+    def visualize_depth_decision(self, img, front_row, back_row):
+        """Draw different colors for front vs back row"""
+        overlay = img.copy()
+        
+        # Front row = Green masks
+        for athlete in front_row:
+            if athlete.mask is not None:
+                mask_uint8 = (athlete.mask > 0).astype(np.uint8) * 255
+                contours, _ = cv2.findContours(mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                cv2.drawContours(overlay, contours, -1, (0, 255, 0), -1)
+        
+        # Back row = Red masks
+        for athlete in back_row:
+            if athlete.mask is not None:
+                mask_uint8 = (athlete.mask > 0).astype(np.uint8) * 255
+                contours, _ = cv2.findContours(mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                cv2.drawContours(overlay, contours, -1, (0, 0, 255), -1)
+        
+        cv2.addWeighted(overlay, 0.4, img, 0.6, 0, img)
     
     def draw_annotations(
         self, 

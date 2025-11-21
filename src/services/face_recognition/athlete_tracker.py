@@ -21,8 +21,6 @@ class AthletePositionTracker:
         print("Recognizer loaded.")
         
         # --- Initialize YOLO ---
-        print("Loading YOLOv8 Segmentation...")
-        # Using 'l' (large) for best accuracy on stage, use 'm' for speed
         person_model = YOLOSegmentationModel(model_size='l') 
         print("Person segmentation model loaded.")
         
@@ -41,7 +39,7 @@ class AthletePositionTracker:
         show_person_bbox: bool = True,
         filter_front_row: bool = True
     ):
-        # ... (No changes needed here, logic is handled in detector) ...
+        
         detected_athletes = self.detector.detect_and_associate(img, filter_front_row)
         
         current_positions = {
