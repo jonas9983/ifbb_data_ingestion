@@ -15,18 +15,27 @@ from swap_detector import SwapDetector
 from yolo_segmentation import YOLOSegmentationModel 
 
 class AthletePositionTracker:
-    def __init__(self, db_path: str, threshold: float = 0.35, confidence_threshold: float = 0.5):
+    def __init__(
+        self,
+        db_path: str,
+        threshold: float = 0.35,
+        confidence_threshold: float = 0.5,
+        tracker_config: str = None
+    ):
         print("Loading FaceRecognizer...")
         face_recognizer = FaceRecognizer(db_path, threshold=threshold)
         print("Recognizer loaded.")
         
-        # --- Initialize YOLO ---
-        person_model = YOLOSegmentationModel(model_path = 'yolo11l-seg.pt') 
+        # Initialize YOLO with optional tracker config
+        person_model = YOLOSegmentationModel(
+            model_path='yolo11l-seg.pt',
+            tracker_config=tracker_config
+        )
         print("Person segmentation model loaded.")
         
         self.detector = AthleteDetector(
-            face_recognizer, 
-            person_model, 
+            face_recognizer,
+            person_model,
             confidence_threshold=confidence_threshold
         )
         self.swap_detector = SwapDetector()
@@ -106,9 +115,10 @@ def main(args):
     
     # Initialize tracker
     tracker = AthletePositionTracker(
-        args.db, 
+        args.db,
         threshold=args.threshold,
-        confidence_threshold=args.confidence
+        confidence_threshold=args.confidence,
+        tracker_config=args.tracker_config
     )
     
     # Setup output directory
@@ -176,6 +186,7 @@ if __name__ == "__main__":
     parser.add_argument("--threshold", type=float, default=0.35, help="Recognition cosine similarity threshold.")
     parser.add_argument("--confidence", type=float, default=0.5, help="Confidence threshold for person detection.")
     parser.add_argument("--frame-range", type=str, default=None, help="Frame range 'start:end:step'")
+    parser.add_argument("--tracker-config", type=str, default=None, help="Custom BoT-SORT YAML config (ReID enabled).")
     
     args = parser.parse_args()
     main(args)
