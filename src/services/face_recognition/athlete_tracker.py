@@ -21,7 +21,7 @@ class AthletePositionTracker:
         print("Recognizer loaded.")
         
         # --- Initialize YOLO ---
-        person_model = YOLOSegmentationModel(model_size='l') 
+        person_model = YOLOSegmentationModel(model_path = 'yolo11l-seg.pt') 
         print("Person segmentation model loaded.")
         
         self.detector = AthleteDetector(
