@@ -2,15 +2,15 @@ tracker_type: botsort
 track_high_thresh: 0.6
 track_low_thresh: 0.1
 new_track_thresh: 0.7
-match_thresh: 0.7
+match_thresh: 0.8
+
 gmc_method: sparseOptFlow
 replay_with_len: 10
 
 with_reid: True
-proximity_thresh: 0.2  # How close they must be physically to be considered the same
-appearance_thresh: 0.2 # How similar they must LOOK (0.0-1.0). 
-                       # 0.25 is default. 0.4 is stricter (better for similar athletes).
+proximity_thresh: 0.5
+appearance_thresh: 0.5
 
-track_buffer: 60
+track_buffer: 30
 model: auto
 fuse_score: True
