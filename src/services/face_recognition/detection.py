@@ -1,6 +1,7 @@
 """
 detection.py
-Refactored to use YOLO TRACKING IDs.
+DEBUG VERSION: LOGIC UNCHANGED.
+Added heavy print statements and Visual Debugging for Raw Face Detections.
 """
 
 import cv2
@@ -12,13 +13,16 @@ from src.services.face_recognition.depth_detection import DepthAnalyzer
 @dataclass
 class DetectedAthlete:
     name: str
-    track_id: Optional[int] # The YOLO ID (e.g., 1, 2, 5)
+    track_id: Optional[int] 
     person_bbox: List[int]
     mask: Optional[np.ndarray]
     center_x: float
     confidence: float = 1.0
     face_bbox: Optional[List[int]] = None 
-    is_front_row: bool = True 
+    is_front_row: bool = True
+    # DEBUG FIELDS
+    debug_face_score: float = 0.0
+    debug_raw_face_name: str = "None" 
 
 class AthleteDetector:
     def __init__(self, face_recognizer, person_detector=None, confidence_threshold=0.5):
@@ -27,9 +31,8 @@ class AthleteDetector:
         self.confidence_threshold = confidence_threshold
         self.depth_analyzer = DepthAnalyzer()
         
-        # MEMORY: Maps Track ID (int) -> Name (str)
-        # Example: {1: "Keone Pearson", 2: "Shaun Clarida"}
         self.athlete_registry: Dict[int, str] = {} 
+        self.overwrite_threshold = 0.75
 
     def detect_faces(self, img) -> List[Dict]:
         """Standard face detection"""
@@ -42,12 +45,11 @@ class AthleteDetector:
                 'name': name, 
                 'bbox': bbox, 
                 'center_x': (bbox[0] + bbox[2]) / 2, 
-                'score': score
+                'score': score 
             })
         return recognized_faces
     
     def _match_face_to_person(self, person_bbox, person_mask, faces_list) -> Optional[Dict]:
-        """Helper to find which face belongs to this body"""
         if not faces_list: return None
         px1, py1, px2, py2 = person_bbox
         
@@ -59,13 +61,13 @@ class AthleteDetector:
             fcx, fcy = int((fx1+fx2)/2), int((fy1+fy2)/2)
             score = 0.0
             
-            # 1. Mask Check (Precise)
+            # 1. Mask Check
             if person_mask is not None:
                 h, w = person_mask.shape[:2]
                 if 0 <= fcx < w and 0 <= fcy < h and person_mask[fcy, fcx] > 0:
                     score += 2.0
             
-            # 2. BBox Check (Fallback)
+            # 2. BBox Check
             if (px1 <= fcx <= px2) and (py1 <= fcy <= py2):
                 score += 1.0
             
@@ -77,12 +79,19 @@ class AthleteDetector:
     def detect_and_associate(self, img, check_depth: bool = False) -> List[DetectedAthlete]:
         img_h, img_w = img.shape[:2]
         
-        # 1. TRACK Persons (Get IDs)
+        # 1. TRACK Persons
         detections = self.person_detector.track(img, threshold=self.confidence_threshold)
         
         # 2. Detect Faces
         faces = self.detect_faces(img)
         
+        # DEBUG LOGGING START
+        if len(faces) > 0:
+            print(f"\n--- Faces Detected: {len(faces)} ---")
+            for f in faces:
+                print(f"   > Raw Face: {f['name']} (Score: {f['score']:.4f})")
+        # DEBUG LOGGING END
+
         detected_athletes = []
         used_faces_indices = set()
         
@@ -93,37 +102,64 @@ class AthleteDetector:
             conf = float(detections.confidence[i])
             track_id = int(detections.tracker_id[i]) if detections.tracker_id is not None else -1
             
-            # --- A. Filter Audience (Bottom 5%) ---
             if bbox[3] > (img_h * 0.95) and (bbox[3] - bbox[1]) < (img_h * 0.15):
                 continue
 
-            # --- B. Name Resolution Strategy ---
             assigned_name = "Unknown"
             
-            # Check Memory First
-            if track_id != -1 and track_id in self.athlete_registry:
-                assigned_name = self.athlete_registry[track_id]
-            
-            # Try to find a face to confirm/update name
-            # We only look for faces if we don't know the name OR we want to re-verify
+            # Match Face
             avail_faces = [f for idx, f in enumerate(faces) if idx not in used_faces_indices]
             matched_face = self._match_face_to_person(bbox, mask, avail_faces)
             
             face_bbox = None
+            new_face_name = "Unknown"
+            new_face_score = 0.0
+
             if matched_face:
                 face_bbox = matched_face['bbox']
-                face_name = matched_face['name']
+                new_face_name = matched_face['name']
+                new_face_score = matched_face['score']
                 
-                # Mark face as used
                 for idx, f in enumerate(faces):
                     if f is matched_face: used_faces_indices.add(idx)
 
-                # UPDATE MEMORY: If we found a named face, update the registry
-                if face_name != "Unknown":
-                    self.athlete_registry[track_id] = face_name
-                    assigned_name = face_name
+            # --- DEBUG LOGIC TRACE ---
+            debug_log = f"[Track {track_id}] "
             
-            # Create Athlete Object
+            # Case A: Existing History
+            if track_id != -1 and track_id in self.athlete_registry:
+                current_registry_name = self.athlete_registry[track_id]
+                debug_log += f"Mem: '{current_registry_name}'. "
+                
+                if new_face_name != "Unknown":
+                    debug_log += f"Face found: '{new_face_name}' ({new_face_score:.2f}). "
+                    if new_face_name == current_registry_name:
+                        assigned_name = current_registry_name
+                        debug_log += "MATCH -> Confirmed."
+                    else:
+                        # CONFLICT
+                        if new_face_score > self.overwrite_threshold:
+                            self.athlete_registry[track_id] = new_face_name
+                            assigned_name = new_face_name
+                            debug_log += f"CONFLICT -> OVERWRITE (Score > {self.overwrite_threshold})."
+                        else:
+                            assigned_name = current_registry_name
+                            debug_log += f"CONFLICT -> IGNORED (Score {new_face_score:.2f} too low). STICKY HOLD."
+                else:
+                    assigned_name = current_registry_name
+                    debug_log += "No Face -> Using Memory."
+
+            # Case B: New Track
+            elif track_id != -1 and new_face_name != "Unknown":
+                self.athlete_registry[track_id] = new_face_name
+                assigned_name = new_face_name
+                debug_log += f"New Track -> Assigned '{new_face_name}'."
+            else:
+                debug_log += "Unknown."
+
+            # Print the decision for this person
+            print(debug_log)
+
             athlete = DetectedAthlete(
                 name=assigned_name,
                 track_id=track_id,
@@ -131,11 +167,13 @@ class AthleteDetector:
                 mask=mask,
                 center_x=(bbox[0] + bbox[2]) / 2,
                 confidence=conf,
-                face_bbox=face_bbox
+                face_bbox=face_bbox,
+                # Pass debug info to visualizer
+                debug_face_score=new_face_score,
+                debug_raw_face_name=new_face_name
             )
             detected_athletes.append(athlete)
         
-        # 4. Depth Logic (Front/Back Row)
         if check_depth and detected_athletes:
             front, back = self.depth_analyzer.filter_front_row_athletes(
                 detected_athletes, img_h, verbose=False
@@ -147,7 +185,6 @@ class AthleteDetector:
         return detected_athletes
 
     def draw_annotations(self, img, athletes, show_person_bbox=True):
-        """Draws Track IDs + Names + Front/Back status"""
         overlay = img.copy()
         alpha = 0.5
         
@@ -157,19 +194,30 @@ class AthleteDetector:
             color = (0, 255, 0) if athlete.is_front_row else (0, 0, 255)
             row_tag = "[FRONT]" if athlete.is_front_row else "[BACK]"
             
-            # Mask
+            # 1. Draw MASK
             if athlete.mask is not None:
                 m = athlete.mask.astype(np.uint8) * 255 if athlete.mask.dtype == bool else athlete.mask
                 contours, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 cv2.drawContours(overlay, contours, -1, color, -1)
                 cv2.drawContours(img, contours, -1, (255,255,255), 1)
             
-            # Label
+            # 2. Draw TRACKER Label (The Final Decision)
             x1, y1, x2, y2 = athlete.person_bbox
             label = f"ID:{athlete.track_id} {row_tag} {athlete.name}"
             
             (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
             cv2.rectangle(img, (x1, y1-20), (x1+tw, y1), color, -1)
             cv2.putText(img, label, (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 2)
-            
+
+            # 3. DEBUG: Draw RAW FACE Detection (Cyan)
+            # This shows what the face model saw, even if the logic ignored it.
+            if athlete.face_bbox is not None:
+                fx1, fy1, fx2, fy2 = athlete.face_bbox
+                # Cyan Box for Face
+                cv2.rectangle(img, (fx1, fy1), (fx2, fy2), (255, 255, 0), 2)
+                
+                # Debug Text: "RawName (Score)"
+                raw_info = f"{athlete.debug_raw_face_name} ({athlete.debug_face_score:.2f})"
+                cv2.putText(img, raw_info, (fx1, fy1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
+
         cv2.addWeighted(overlay, alpha, img, 1-alpha, 0, img)
