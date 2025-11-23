@@ -20,7 +20,8 @@ class AthletePositionTracker:
         db_path: str,
         threshold: float = 0.35,
         confidence_threshold: float = 0.5,
-        tracker_config: str = None
+        tracker_config: str = None,
+        debug_mode: bool = False
     ):
         print("Loading FaceRecognizer...")
         face_recognizer = FaceRecognizer(db_path, threshold=threshold)
@@ -33,10 +34,12 @@ class AthletePositionTracker:
         )
         print("Person segmentation model loaded.")
         
+        # Pass debug_mode to Detector
         self.detector = AthleteDetector(
             face_recognizer,
             person_model,
-            confidence_threshold=confidence_threshold
+            confidence_threshold=confidence_threshold,
+            debug_mode=debug_mode # <--- PASSED DOWN
         )
         self.swap_detector = SwapDetector()
     
@@ -49,8 +52,7 @@ class AthletePositionTracker:
         filter_front_row: bool = True
     ):
         
-        # 1. Detect ALL athletes (Front and Back)
-        # The detector now marks them with .is_front_row = True/False
+        # 1. Detect ALL athletes
         all_athletes = self.detector.detect_and_associate(img, check_depth=filter_front_row)
         
         # 2. Filter: We only want to track SWAPS for the front row
@@ -67,7 +69,7 @@ class AthletePositionTracker:
             frame_number
         )
         
-        # 3. Visualize: We want to see EVERYONE (Green for front, Red for back)
+        # 3. Visualize
         self.detector.draw_annotations(img, all_athletes, show_person_bbox)
         
         return all_athletes
@@ -113,12 +115,13 @@ def parse_frame_range(range_str: str) -> Tuple[Optional[int], Optional[int], int
 def main(args):
     """Main function to process all frames in a directory."""
     
-    # Initialize tracker
+    # Initialize tracker with debug flag
     tracker = AthletePositionTracker(
         args.db,
         threshold=args.threshold,
         confidence_threshold=args.confidence,
-        tracker_config=args.tracker_config
+        tracker_config=args.tracker_config,
+        debug_mode=args.debug # <--- PASSED HERE
     )
     
     # Setup output directory
@@ -187,6 +190,7 @@ if __name__ == "__main__":
     parser.add_argument("--confidence", type=float, default=0.5, help="Confidence threshold for person detection.")
     parser.add_argument("--frame-range", type=str, default=None, help="Frame range 'start:end:step'")
     parser.add_argument("--tracker-config", type=str, default=None, help="Custom BoT-SORT YAML config (ReID enabled).")
+    parser.add_argument("--debug", action="store_true", help="Enable heavy debug logging and visualization.")
     
     args = parser.parse_args()
     main(args)

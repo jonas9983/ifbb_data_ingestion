@@ -1,7 +1,6 @@
 """
 detection.py
-DEBUG VERSION: LOGIC UNCHANGED.
-Added heavy print statements and Visual Debugging for Raw Face Detections.
+Refactored with 'Sticky Identity' logic + Optional Debugging.
 """
 
 import cv2
@@ -25,11 +24,12 @@ class DetectedAthlete:
     debug_raw_face_name: str = "None" 
 
 class AthleteDetector:
-    def __init__(self, face_recognizer, person_detector=None, confidence_threshold=0.5):
+    def __init__(self, face_recognizer, person_detector=None, confidence_threshold=0.5, debug_mode=False):
         self.face_recognizer = face_recognizer
         self.person_detector = person_detector
         self.confidence_threshold = confidence_threshold
         self.depth_analyzer = DepthAnalyzer()
+        self.debug_mode = debug_mode  # <--- NEW FLAG
         
         self.athlete_registry: Dict[int, str] = {} 
         self.overwrite_threshold = 0.75
@@ -85,12 +85,11 @@ class AthleteDetector:
         # 2. Detect Faces
         faces = self.detect_faces(img)
         
-        # DEBUG LOGGING START
-        if len(faces) > 0:
+        # DEBUG LOGGING
+        if self.debug_mode and len(faces) > 0:
             print(f"\n--- Faces Detected: {len(faces)} ---")
             for f in faces:
                 print(f"   > Raw Face: {f['name']} (Score: {f['score']:.4f})")
-        # DEBUG LOGGING END
 
         detected_athletes = []
         used_faces_indices = set()
@@ -123,7 +122,8 @@ class AthleteDetector:
                 for idx, f in enumerate(faces):
                     if f is matched_face: used_faces_indices.add(idx)
 
-            # --- DEBUG LOGIC TRACE ---
+            # --- LOGIC TRACE ---
+            # We build the debug string but only print it if debug_mode is True
             debug_log = f"[Track {track_id}] "
             
             # Case A: Existing History
@@ -157,8 +157,9 @@ class AthleteDetector:
             else:
                 debug_log += "Unknown."
 
-            # Print the decision for this person
-            print(debug_log)
+            # ONLY PRINT IF DEBUG MODE IS ON
+            if self.debug_mode:
+                print(debug_log)
 
             athlete = DetectedAthlete(
                 name=assigned_name,
@@ -168,7 +169,6 @@ class AthleteDetector:
                 center_x=(bbox[0] + bbox[2]) / 2,
                 confidence=conf,
                 face_bbox=face_bbox,
-                # Pass debug info to visualizer
                 debug_face_score=new_face_score,
                 debug_raw_face_name=new_face_name
             )
@@ -209,9 +209,8 @@ class AthleteDetector:
             cv2.rectangle(img, (x1, y1-20), (x1+tw, y1), color, -1)
             cv2.putText(img, label, (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 2)
 
-            # 3. DEBUG: Draw RAW FACE Detection (Cyan)
-            # This shows what the face model saw, even if the logic ignored it.
-            if athlete.face_bbox is not None:
+            # 3. DEBUG: Draw RAW FACE Detection (Cyan) - ONLY IN DEBUG MODE
+            if self.debug_mode and athlete.face_bbox is not None:
                 fx1, fy1, fx2, fy2 = athlete.face_bbox
                 # Cyan Box for Face
                 cv2.rectangle(img, (fx1, fy1), (fx2, fy2), (255, 255, 0), 2)
