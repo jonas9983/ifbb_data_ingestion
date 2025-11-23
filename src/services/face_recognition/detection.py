@@ -78,7 +78,6 @@ class AthleteDetector:
         img_h, img_w = img.shape[:2]
         
         # 1. TRACK Persons (Get IDs)
-        # We use .track() from the updated YOLOSegmentationModel
         detections = self.person_detector.track(img, threshold=self.confidence_threshold)
         
         # 2. Detect Faces
@@ -88,7 +87,6 @@ class AthleteDetector:
         used_faces_indices = set()
         
         # 3. Process each Tracked Person
-        # Supervision Detections object allows iteration
         for i in range(len(detections)):
             bbox = detections.xyxy[i].astype(int)
             mask = detections.mask[i] if detections.mask is not None else None
@@ -97,7 +95,7 @@ class AthleteDetector:
             
             # --- A. Filter Audience (Bottom 5%) ---
             if bbox[3] > (img_h * 0.95) and (bbox[3] - bbox[1]) < (img_h * 0.15):
-                continue # Skip audience
+                continue
 
             # --- B. Name Resolution Strategy ---
             assigned_name = "Unknown"
