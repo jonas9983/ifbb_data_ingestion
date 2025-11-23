@@ -15,14 +15,14 @@ class EventRecord:
     frame_number: int
     frame_name: str
     timestamp: str
-    athletes: List[str]  # Ordered left to right
+    athletes: List[str]   # Ordered left to right
     trigger: str
     athletes_swapped: Optional[List[Tuple[str, str]]] = None
     
     def to_dict(self):
         """Convert to dictionary for JSON serialization."""
         data = asdict(self)
-        # Convert list of tuples to more readable format
+        # Convert list of tuples to more readable format for JSON
         if self.athletes_swapped:
             data['athletes_swapped'] = [
                 {'athlete_1': a, 'athlete_2': b} 
@@ -39,7 +39,7 @@ class SwapDetector:
     
     def __init__(self):
         """Initialize the swap detector."""
-        # State tracking
+        # State tracking: Stores the most recent, stable positions (Name: Center_X)
         self.last_frame_positions: Dict[str, float] = {}
         self.all_athletes_seen: Set[str] = set()
         
@@ -51,12 +51,7 @@ class SwapDetector:
         self.frames_processed: int = 0
     
     def update_athletes_seen(self, athletes: List[str]):
-        """
-        Track new athletes that appear in the frame.
-        
-        Args:
-            athletes: List of athlete names detected
-        """
+        """Track new athletes that appear in the frame."""
         for athlete in athletes:
             if athlete not in self.all_athletes_seen:
                 self.all_athletes_seen.add(athlete)
@@ -70,26 +65,26 @@ class SwapDetector:
         """
         Detect if any athletes swapped positions since last frame.
         
-        Args:
-            current_positions: Dict mapping athlete name to center_x position
-            frame_name: Name of current frame (for logging)
-            
         Returns:
             List of tuples (athlete_a, athlete_b) that swapped
         """
         swaps = []
         
-        # Need at least 2 athletes in both frames
+        # Need at least 2 common athletes in both frames for a meaningful comparison
         if len(self.last_frame_positions) < 2 or len(current_positions) < 2:
             return swaps
         
-        # Find athletes present in both frames
+        # Find athletes present in BOTH historical state and current state
         common_athletes = set(self.last_frame_positions.keys()) & set(current_positions.keys())
         
         if len(common_athletes) < 2:
             return swaps
         
-        # Check all pairs for position swaps
+        # Get lineup names for clear logging
+        prev_lineup_names = self.get_ordered_athletes(self.last_frame_positions)
+        current_lineup_names = self.get_ordered_athletes(current_positions)
+        
+        # Check all pairs for position swaps among common athletes
         common_list = sorted(list(common_athletes))
         
         for i in range(len(common_list)):
@@ -97,7 +92,7 @@ class SwapDetector:
                 athlete_a = common_list[i]
                 athlete_b = common_list[j]
                 
-                # Previous positions
+                # Previous positions from the last stable frame
                 prev_a = self.last_frame_positions[athlete_a]
                 prev_b = self.last_frame_positions[athlete_b]
                 
@@ -105,31 +100,32 @@ class SwapDetector:
                 curr_a = current_positions[athlete_a]
                 curr_b = current_positions[athlete_b]
                 
-                # Check if relative order changed
+                # Check if relative order changed (A was left of B, now A is right of B, etc.)
                 prev_order = "A_left_of_B" if prev_a < prev_b else "B_left_of_A"
                 curr_order = "A_left_of_B" if curr_a < curr_b else "B_left_of_A"
                 
                 if prev_order != curr_order:
+                    # FIX 2: Log the swap detection with clear text instead of arrows
+                    prev_relative = f"{athlete_a} was on the {'LEFT' if prev_a < prev_b else 'RIGHT'} of {athlete_b}"
+                    curr_relative = f"{athlete_a} is now on the {'LEFT' if curr_a < curr_b else 'RIGHT'} of {athlete_b}"
+                    
                     print("=" * 60)
                     print(f"🎉 POSITION SWAP DETECTED in: {frame_name}")
-                    print(f"   Between: {athlete_a} ↔ {athlete_b}")
-                    print(f"   Previous: {athlete_a} {'←' if prev_a < prev_b else '→'} {athlete_b}")
-                    print(f"   Current:  {athlete_a} {'←' if curr_a < curr_b else '→'} {athlete_b}")
+                    print(f"   Between: {athlete_a} and {athlete_b}")
+                    print(f"   ---")
+                    print(f"   PREVIOUS FULL LINEUP: {' | '.join(prev_lineup_names)}") 
+                    print(f"   CURRENT FULL LINEUP:  {' | '.join(current_lineup_names)}") 
+                    print(f"   ---")
+                    print(f"   Relative Position Change:")
+                    print(f"     Previous: {prev_relative}")
+                    print(f"     Current:  {curr_relative}")
                     print("=" * 60)
                     swaps.append((athlete_a, athlete_b))
         
         return swaps
     
     def get_ordered_athletes(self, positions: Dict[str, float]) -> List[str]:
-        """
-        Get list of athlete names ordered left to right.
-        
-        Args:
-            positions: Dict mapping athlete name to center_x
-            
-        Returns:
-            List of athlete names sorted by position
-        """
+        """Get list of athlete names ordered left to right."""
         sorted_athletes = sorted(positions.items(), key=lambda x: x[1])
         return [name for name, _ in sorted_athletes]
     
@@ -141,16 +137,7 @@ class SwapDetector:
         trigger: str,
         swaps: Optional[List[Tuple[str, str]]] = None
     ):
-        """
-        Record a tracking event.
-        
-        Args:
-            frame_number: Frame number in sequence
-            frame_name: Frame filename
-            athletes: List of athlete names (left to right)
-            trigger: Description of what triggered this event
-            swaps: List of (athlete_a, athlete_b) tuples that swapped
-        """
+        """Record a tracking event."""
         event = EventRecord(
             frame_number=frame_number,
             frame_name=frame_name,
@@ -169,54 +156,38 @@ class SwapDetector:
     ) -> Dict:
         """
         Update state and detect changes.
-        
-        Args:
-            current_positions: Dict mapping athlete name to center_x
-            frame_name: Name of current frame
-            frame_number: Frame number in sequence
-            
-        Returns:
-            Dict with 'swaps' and 'ordered_athletes'
         """
         self.frames_processed += 1
         
         if len(current_positions) > 0:
             self.frames_with_detection += 1
         
-        # Update athletes seen
         self.update_athletes_seen(list(current_positions.keys()))
-        
-        # Get ordered athlete list
         ordered_athletes = self.get_ordered_athletes(current_positions)
         
-        # Detect swaps
+        # 1. Detect Swaps by comparing current vs last stable state
         swaps = self.detect_swaps(current_positions, frame_name)
         
-        # Record events
+        # 2. Record Events
         if swaps:
-            # Position change event
-            self.record_event(
-                frame_number=frame_number,
-                frame_name=frame_name,
-                athletes=ordered_athletes,
-                trigger="position_changed",
-                swaps=swaps
-            )
+            # Position change event (Actual swap detected)
+            self.record_event(frame_number, frame_name, ordered_athletes, "position_changed", swaps)
         elif len(ordered_athletes) > 0:
-            # Check if this is a new lineup configuration
             prev_lineup = self.get_current_lineup_names()
-            if ordered_athletes != prev_lineup:
-                # Athletes appeared/disappeared or changed
-                self.record_event(
-                    frame_number=frame_number,
-                    frame_name=frame_name,
-                    athletes=ordered_athletes,
-                    trigger="lineup_changed"
-                )
+            
+            # Check for lineup changes (athletes appeared/disappeared)
+            if ordered_athletes != prev_lineup and len(ordered_athletes) >= len(prev_lineup):
+                self.record_event(frame_number, frame_name, ordered_athletes, "lineup_changed")
+            
+            # FIX 1: Log an event for every detected frame if the lineup is stable
+            elif ordered_athletes == prev_lineup:
+                self.record_event(frame_number, frame_name, ordered_athletes, "stable_lineup")
         
-        # Update state (only if we detected athletes)
+        # 3. Update State (Intelligent Update)
+        # We only update if the current state is stable or growing.
         if len(current_positions) > 0:
-            self.last_frame_positions = current_positions
+            if len(current_positions) >= len(self.last_frame_positions):
+                self.last_frame_positions = current_positions
         
         return {
             'swaps': swaps,
@@ -224,12 +195,7 @@ class SwapDetector:
         }
     
     def get_current_lineup(self) -> List[Tuple[int, str]]:
-        """
-        Get the current lineup from left to right with positions.
-        
-        Returns:
-            List of (position, name) tuples sorted by position
-        """
+        """Get the current lineup from left to right with positions."""
         sorted_athletes = sorted(
             self.last_frame_positions.items(), 
             key=lambda x: x[1]
@@ -237,12 +203,7 @@ class SwapDetector:
         return [(idx + 1, name) for idx, (name, _) in enumerate(sorted_athletes)]
     
     def get_current_lineup_names(self) -> List[str]:
-        """
-        Get the current lineup as a list of names (left to right).
-        
-        Returns:
-            List of athlete names sorted by position
-        """
+        """Get the current lineup as a list of names (left to right)."""
         sorted_athletes = sorted(
             self.last_frame_positions.items(), 
             key=lambda x: x[1]
@@ -250,12 +211,7 @@ class SwapDetector:
         return [name for name, _ in sorted_athletes]
     
     def get_statistics(self) -> Dict:
-        """
-        Get tracking statistics.
-        
-        Returns:
-            Dict with statistics
-        """
+        """Get tracking statistics."""
         return {
             'frames_processed': self.frames_processed,
             'frames_with_detection': self.frames_with_detection,

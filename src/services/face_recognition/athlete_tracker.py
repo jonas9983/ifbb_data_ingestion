@@ -34,12 +34,12 @@ class AthletePositionTracker:
         )
         print("Person segmentation model loaded.")
         
-        # Pass debug_mode to Detector
+        # Initialize AthleteDetector, passing the debug mode flag
         self.detector = AthleteDetector(
             face_recognizer,
             person_model,
             confidence_threshold=confidence_threshold,
-            debug_mode=debug_mode # <--- PASSED DOWN
+            debug_mode=debug_mode 
         )
         self.swap_detector = SwapDetector()
     
@@ -52,24 +52,29 @@ class AthletePositionTracker:
         filter_front_row: bool = True
     ):
         
-        # 1. Detect ALL athletes
+        # 1. Detect ALL athletes (Front and Back)
         all_athletes = self.detector.detect_and_associate(img, check_depth=filter_front_row)
         
-        # 2. Filter: We only want to track SWAPS for the front row
-        front_row_athletes = [a for a in all_athletes if a.is_front_row]
+        # 2. Filter: We only want to track SWAPS for NAMED front row athletes
+        valid_front_row_athletes = [
+            a for a in all_athletes 
+            if a.is_front_row and a.name != "Unknown"
+        ]
         
+        # Create a dictionary of recognized athlete positions (Name: Center_X)
         current_positions = {
             athlete.name: athlete.center_x 
-            for athlete in front_row_athletes
+            for athlete in valid_front_row_athletes
         }
         
+        # 3. Update Swap Detector with clean data
         self.swap_detector.update_state(
             current_positions,
             frame_name,
             frame_number
         )
         
-        # 3. Visualize
+        # 4. Visualize: Draw annotations on the image (using all_athletes for display)
         self.detector.draw_annotations(img, all_athletes, show_person_bbox)
         
         return all_athletes
@@ -115,13 +120,13 @@ def parse_frame_range(range_str: str) -> Tuple[Optional[int], Optional[int], int
 def main(args):
     """Main function to process all frames in a directory."""
     
-    # Initialize tracker with debug flag
+    # Initialize tracker with arguments
     tracker = AthletePositionTracker(
         args.db,
         threshold=args.threshold,
         confidence_threshold=args.confidence,
         tracker_config=args.tracker_config,
-        debug_mode=args.debug # <--- PASSED HERE
+        debug_mode=args.debug
     )
     
     # Setup output directory
@@ -153,8 +158,7 @@ def main(args):
         img_path = os.path.join(args.data_dir, img_name)
         img = cv2.imread(img_path)
         
-        if img is None:
-            continue
+        if img is None: continue
         
         # Calculate actual frame number in original sequence
         frame_number = all_images.index(img_name)
@@ -190,6 +194,8 @@ if __name__ == "__main__":
     parser.add_argument("--confidence", type=float, default=0.5, help="Confidence threshold for person detection.")
     parser.add_argument("--frame-range", type=str, default=None, help="Frame range 'start:end:step'")
     parser.add_argument("--tracker-config", type=str, default=None, help="Custom BoT-SORT YAML config (ReID enabled).")
+    
+    # NEW ARGUMENT: Debug flag
     parser.add_argument("--debug", action="store_true", help="Enable heavy debug logging and visualization.")
     
     args = parser.parse_args()
