@@ -49,6 +49,30 @@ class SwapDetector:
         # Statistics
         self.frames_with_detection: int = 0
         self.frames_processed: int = 0
+        
+    def reset_state(
+        self, 
+        frame_number: int, 
+        frame_name: str, 
+        trigger: str = "state_reset"
+    ):
+        """
+        Clears the last known stable positions and records an event.
+        Used primarily after a camera cut is detected.
+        """
+        
+        # Record the reset event
+        self.record_event(
+            frame_number=frame_number,
+            frame_name=frame_name,
+            athletes=[], # No lineup recorded for a reset event
+            trigger=trigger,
+            swaps=None
+        )
+
+        # CRUCIAL STEP: Clear historical state
+        self.last_frame_positions = {}
+        # We DO NOT clear self.all_athletes_seen as they are still known.
     
     def update_athletes_seen(self, athletes: List[str]):
         """Track new athletes that appear in the frame."""
@@ -105,7 +129,7 @@ class SwapDetector:
                 curr_order = "A_left_of_B" if curr_a < curr_b else "B_left_of_A"
                 
                 if prev_order != curr_order:
-                    # FIX 2: Log the swap detection with clear text instead of arrows
+                    # Log the swap detection with clear text instead of arrows
                     prev_relative = f"{athlete_a} was on the {'LEFT' if prev_a < prev_b else 'RIGHT'} of {athlete_b}"
                     curr_relative = f"{athlete_a} is now on the {'LEFT' if curr_a < curr_b else 'RIGHT'} of {athlete_b}"
                     
@@ -179,7 +203,7 @@ class SwapDetector:
             if ordered_athletes != prev_lineup and len(ordered_athletes) >= len(prev_lineup):
                 self.record_event(frame_number, frame_name, ordered_athletes, "lineup_changed")
             
-            # FIX 1: Log an event for every detected frame if the lineup is stable
+            # Log an event for every detected frame if the lineup is stable
             elif ordered_athletes == prev_lineup:
                 self.record_event(frame_number, frame_name, ordered_athletes, "stable_lineup")
         

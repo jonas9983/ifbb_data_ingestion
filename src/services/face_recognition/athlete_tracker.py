@@ -6,6 +6,7 @@ import os
 import cv2
 import json
 import argparse
+import numpy as np # <-- IMPORTED
 from typing import Tuple, Optional
 from src.services.face_recognition.face_recognizer import FaceRecognizer
 
@@ -42,7 +43,38 @@ class AthletePositionTracker:
             debug_mode=debug_mode 
         )
         self.swap_detector = SwapDetector()
-    
+        
+        self.last_gray_frame: Optional[np.ndarray] = None
+        self.cut_threshold: float = 25.0  # Tunable: Average pixel difference threshold (0-255)
+
+    def _check_for_camera_cut(self, img: np.ndarray, frame_name: str) -> bool:
+        """Compares current frame to previous frame to detect sudden cuts/fades."""
+        current_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        
+        if self.last_gray_frame is None:
+            self.last_gray_frame = current_gray
+            return False
+
+        # Calculate absolute difference between frames
+        diff = cv2.absdiff(current_gray, self.last_gray_frame)
+        
+        # Calculate the average pixel difference across the image
+        avg_diff = np.mean(diff)
+        
+        is_cut = avg_diff > self.cut_threshold
+        
+        # Update last frame for the next iteration
+        self.last_gray_frame = current_gray
+        
+        if is_cut:
+            print("=" * 60)
+            print(f"🚨 **CAMERA CUT DETECTED** in: {frame_name} (Avg Diff: {avg_diff:.2f})")
+            print("Resetting tracking state to prevent false swap detection.")
+            print("=" * 60)
+            return True
+        
+        return False
+
     def process_frame(
         self, 
         img, 
@@ -51,6 +83,14 @@ class AthletePositionTracker:
         show_person_bbox: bool = True,
         filter_front_row: bool = True
     ):
+        
+        # --- NEW CUT DETECTION STEP ---
+        is_cut = self._check_for_camera_cut(img, frame_name)
+        
+        if is_cut:
+            # 1. Reset the swap detector state immediately
+            # This records the 'camera_cut' event and clears last_frame_positions
+            self.swap_detector.reset_state(frame_number, frame_name, "camera_cut") 
         
         # 1. Detect ALL athletes (Front and Back)
         all_athletes = self.detector.detect_and_associate(img, check_depth=filter_front_row)
@@ -68,6 +108,8 @@ class AthletePositionTracker:
         }
         
         # 3. Update Swap Detector with clean data
+        # Note: If is_cut was True, swap_detector state is reset, and this
+        # update_state will now treat this frame as the start of a new scene.
         self.swap_detector.update_state(
             current_positions,
             frame_name,
@@ -194,8 +236,6 @@ if __name__ == "__main__":
     parser.add_argument("--confidence", type=float, default=0.5, help="Confidence threshold for person detection.")
     parser.add_argument("--frame-range", type=str, default=None, help="Frame range 'start:end:step'")
     parser.add_argument("--tracker-config", type=str, default=None, help="Custom BoT-SORT YAML config (ReID enabled).")
-    
-    # NEW ARGUMENT: Debug flag
     parser.add_argument("--debug", action="store_true", help="Enable heavy debug logging and visualization.")
     
     args = parser.parse_args()
