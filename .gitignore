@@ -13,5 +13,6 @@
 *.mp4
 *.txt
 *.zip
-*.pth
-*npz
+*.pt*
+*.npz
+rf-detr
