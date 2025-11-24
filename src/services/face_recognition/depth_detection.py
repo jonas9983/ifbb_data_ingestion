@@ -28,7 +28,7 @@ class DepthAnalyzer:
         Check if inner_athlete is physically behind outer_athlete.
         Priority: Segmentation Masks. Fallback: Bounding Boxes.
         """
-        # --- STRATEGY 1: MASK BASED CHECK (Pixel Perfect) ---
+        # --- Mask Based Check---
         if inner_athlete.mask is not None and outer_athlete.mask is not None:
             mask_inner = (inner_athlete.mask > 0)
             mask_outer = (outer_athlete.mask > 0)
@@ -45,7 +45,7 @@ class DepthAnalyzer:
             # If significant overlap, the smaller/inner one is likely behind
             return overlap_ratio > self.mask_overlap_threshold
 
-        # --- STRATEGY 2: BBOX FALLBACK ---
+        # --- Bbox Fallback ---
         in_box = self._get_bbox(inner_athlete)
         out_box = self._get_bbox(outer_athlete)
         
@@ -113,7 +113,7 @@ class DepthAnalyzer:
             # Not enough people to cluster, return what we have
             return candidates, rejected_by_overlap
 
-        # --- STEP 2: Clustering based on Feet Position (Y-Max) ---
+        # ---Clustering based on Feet Position (Y-Max) ---
         y_max_values = np.array([self._get_feet_y(a) for a in candidates]).reshape(-1, 1)
 
         # Calculate spread of feet positions

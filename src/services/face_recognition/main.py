@@ -6,13 +6,13 @@ import os
 import cv2
 import json
 import argparse
-import numpy as np # <-- IMPORTED
+import numpy as np
 from typing import Tuple, Optional
 from src.services.face_recognition.face_recognizer import FaceRecognizer
 
 # Import modular components
 from detection import AthleteDetector
-from swap_detector import SwapDetector
+from services.face_recognition.swap_detection import SwapDetector
 from yolo_segmentation import YOLOSegmentationModel 
 
 class AthletePositionTracker:
