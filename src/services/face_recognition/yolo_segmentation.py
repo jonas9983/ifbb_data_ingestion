@@ -2,9 +2,7 @@ from ultralytics import YOLO
 import supervision as sv
 import numpy as np
 from PIL import Image
-import cv2
 import os
-
 
 class YOLOSegmentationModel:
     def __init__(self, model_path='yolo11l-seg.pt', tracker_config: str = None):
