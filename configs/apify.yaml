@@ -1,3 +1,8 @@
-resultsLimit: 30
-onlyPostsNewerThan: None
-skipPinnedPosts: None
+settings:
+  max_posts_per_user: 3
+  
+  # Directory where images will be saved
+  download_folder: "./data/insta/instagram_downloads"
+
+athletes: # This is temporary. In the future, the athlete's name will come from a different source
+  - "fitnessbyaims"
