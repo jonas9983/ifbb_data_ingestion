@@ -1,13 +1,12 @@
 """
 detection.py
-Refactored with 'Sticky Identity' logic + Optional Debugging.
 """
 
 import cv2
 import numpy as np
 from typing import List, Dict, Optional
 from dataclasses import dataclass
-from src.services.face_recognition.depth_detection import DepthAnalyzer
+from src.services.athlete_tracking.depth_detection import DepthAnalyzer
 
 @dataclass
 class DetectedAthlete:
@@ -29,7 +28,7 @@ class AthleteDetector:
         self.person_detector = person_detector
         self.confidence_threshold = confidence_threshold
         self.depth_analyzer = DepthAnalyzer()
-        self.debug_mode = debug_mode  # <--- NEW FLAG
+        self.debug_mode = debug_mode
         
         self.athlete_registry: Dict[int, str] = {} 
         self.overwrite_threshold = 0.75

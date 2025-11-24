@@ -6,6 +6,8 @@ from insightface.app import FaceAnalysis
 from numpy import dot
 from numpy.linalg import norm
 
+# TODO: save the image names that will be stored in the supabase database for future reference of the images that build the 
+# faces database
 
 class FaceDatabaseBuilder:
     def __init__(self, providers=['CPUExecutionProvider']):

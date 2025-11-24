@@ -8,11 +8,11 @@ import json
 import argparse
 import numpy as np
 from typing import Tuple, Optional
-from src.services.face_recognition.face_recognizer import FaceRecognizer
+from services.faces.face_recognizer import FaceRecognizer
 
 # Import modular components
 from detection import AthleteDetector
-from services.face_recognition.swap_detection import SwapDetector
+from services.athlete_tracking.swap_detection import SwapDetector
 from yolo_segmentation import YOLOSegmentationModel 
 
 class AthletePositionTracker:
@@ -35,7 +35,7 @@ class AthletePositionTracker:
         )
         print("Person segmentation model loaded.")
         
-        # Initialize AthleteDetector, passing the debug mode flag
+        # Initialize AthleteDetector
         self.detector = AthleteDetector(
             face_recognizer,
             person_model,
@@ -84,7 +84,7 @@ class AthletePositionTracker:
         filter_front_row: bool = True
     ):
         
-        # --- NEW CUT DETECTION STEP ---
+        # --- Camera Cut Detection---
         is_cut = self._check_for_camera_cut(img, frame_name)
         
         if is_cut:
@@ -236,7 +236,7 @@ if __name__ == "__main__":
     parser.add_argument("--confidence", type=float, default=0.5, help="Confidence threshold for person detection.")
     parser.add_argument("--frame-range", type=str, default=None, help="Frame range 'start:end:step'")
     parser.add_argument("--tracker-config", type=str, default=None, help="Custom BoT-SORT YAML config (ReID enabled).")
-    parser.add_argument("--debug", action="store_true", help="Enable heavy debug logging and visualization.")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging and visualization.")
     
     args = parser.parse_args()
     main(args)
