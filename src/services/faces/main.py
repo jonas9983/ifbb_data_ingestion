@@ -22,7 +22,7 @@ class SingleFaceFilter:
         
         if not os.path.exists(source_dir):
             print(f"⚠ Source not found: {source_dir}")
-            return
+            return 0
         
         images = [f for f in os.listdir(source_dir) 
                   if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
@@ -44,6 +44,7 @@ class SingleFaceFilter:
                 single_face_count += 1
         
         print(f"  {athlete_name}: {single_face_count} single-face images")
+        return single_face_count
 
 
 class DatabaseWorkflow:
@@ -52,9 +53,10 @@ class DatabaseWorkflow:
     def __init__(self, config_path: str = "./configs/apify.yaml"):
         self.config_path = config_path
         self.config = self._load_config(config_path)
-        
+
+        self.min_images = self.config['settings'].get('min_images_per_athlete', 3)
         self.download_dir = self.config['settings']['download_folder']
-        self.validation_dir = os.path.join(self.download_dir, "validation")
+        self.validation_dir = self.config['settings'].get('validation_folder', 'validation')
         self.database_dir = self.config['settings'].get('database_folder', 'database')
         self.db_save_path = self.config['settings'].get('face_db_path', 'face_db.npz')
     
@@ -85,7 +87,7 @@ class DatabaseWorkflow:
         
         for athlete in athletes:
             source_dir = os.path.join(self.download_dir, athlete)
-            filter_tool.filter_directory(source_dir, self.validation_dir, athlete)  # Use self.validation_dir
+            filter_tool.filter_directory(source_dir, self.validation_dir, athlete)
         
         print(f"\n✓ Filtering complete. Review: {self.validation_dir}/\n")
     
@@ -114,14 +116,39 @@ class DatabaseWorkflow:
             print(f"⚠ No athlete folders found in {self.database_dir}")
             return False
         
+        # Check minimum images for each athlete in database folder
+        athletes_below_min = {}
+        for athlete in subdirs:
+            athlete_path = os.path.join(self.database_dir, athlete)
+            img_count = len([f for f in os.listdir(athlete_path) 
+                           if f.lower().endswith(('.png', '.jpg', '.jpeg'))])
+            if img_count < self.min_images:
+                athletes_below_min[athlete] = img_count
+        
+        if athletes_below_min:
+            print(f"⚠ Warning: Some athletes have fewer than {self.min_images} validated images:")
+            for name, count in athletes_below_min.items():
+                print(f"    {name}: {count} images")
+            
+            response = input(f"\nContinue building database anyway? (y/n): ")
+            if response.lower() != 'y':
+                print("Database building cancelled.")
+                return False
+        
         print(f"Building database from {len(subdirs)} athletes...")
         
-        builder = FaceDatabaseBuilder()
-        database = builder.build(self.database_dir, self.db_save_path)
+        # Build database with image references
+        database = self._build_database_with_references()
         
         print(f"✓ Database saved: {self.db_save_path}")
         print(f"  Athletes in database: {len(database)}")
         return True
+    
+    def _build_database_with_references(self):
+        """Build face database and track which images were used."""
+        builder = FaceDatabaseBuilder()
+        database = builder.build(self.database_dir, self.db_save_path, save_references=True)
+        return database
     
     def run_full_workflow(self, skip_scrape=False, skip_filter=False, 
                           skip_validation=False, skip_build=False):
