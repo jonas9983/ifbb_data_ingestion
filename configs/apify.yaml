@@ -3,6 +3,12 @@ settings:
   
   # Directory where images will be saved
   download_folder: "./data/insta/instagram_downloads"
+  
+  # Directory where validated face images are stored for database building
+  database_folder: "./data/faces/database"
+  
+  # Path where the face embeddings database will be saved
+  face_db_path: "./data/faces/database/face_db.npz"
 
 athletes: # This is temporary. In the future, the athlete's name will come from a different source
   - "fitnessbyaims"
