@@ -58,7 +58,8 @@ class DatabaseWorkflow:
         self.download_dir = self.config['settings']['download_folder']
         self.validation_dir = self.config['settings'].get('validation_folder', 'validation')
         self.database_dir = self.config['settings'].get('database_folder', 'database')
-        self.db_save_path = self.config['settings'].get('face_db_path', 'face_db.npz')
+        self.npz_basename = self.config['settings'].get('npz_basename', 'face_db.npz')
+        self.db_save_path = f"{self.database_dir}/{self.npz_basename}"
     
     def _load_config(self, path: str) -> Dict[str, Any]:
         with open(path, 'r') as file:
@@ -86,6 +87,7 @@ class DatabaseWorkflow:
         athletes = self.config['athletes']
         
         for athlete in athletes:
+            print(f"Processing {athlete}")
             source_dir = os.path.join(self.download_dir, athlete)
             filter_tool.filter_directory(source_dir = source_dir, target_dir = self.validation_dir, athlete_name = athlete)
         
@@ -97,6 +99,7 @@ class DatabaseWorkflow:
         print("="*60)
         print(f"\nReview images in: {self.validation_dir}/")
         print(f"Move validated images to: {self.database_dir}/\n")
+        # TODO: add logic to move images from self.validation_dir to self.database_dir
         input("Press Enter when ready to build database...")
     
     def step4_build_database(self):
