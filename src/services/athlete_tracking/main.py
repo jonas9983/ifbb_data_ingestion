@@ -233,7 +233,7 @@ if __name__ == "__main__":
     parser.add_argument("--threshold", type=float, default=0.35, help="Recognition cosine similarity threshold.")
     parser.add_argument("--confidence", type=float, default=0.5, help="Confidence threshold for person detection.")
     parser.add_argument("--frame-range", type=str, default=None, help="Frame range 'start:end:step'")
-    parser.add_argument("--tracker-config", type=str, default=None, help="Custom BoT-SORT YAML config (ReID enabled).")
+    parser.add_argument("--tracker-config", type=str, default=None, help="Custom BoT-SORT YAML config.")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging and visualization.")
     
     args = parser.parse_args()

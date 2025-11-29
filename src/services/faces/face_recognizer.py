@@ -28,6 +28,7 @@ class FaceDatabaseBuilder:
         image_references = {} if save_references else None
 
         for person in os.listdir(data_dir):
+            print(f"Building database for {person}")
             folder_path = os.path.join(data_dir, person)
             if not os.path.isdir(folder_path):
                 continue

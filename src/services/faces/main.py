@@ -149,13 +149,13 @@ class DatabaseWorkflow:
         print(f"Building database from {len(subdirs)} athletes...")
         
         # Build database with image references
-        database = self._build_database_with_references()
+        database = self._build_database()
         
         print(f"✓ Database saved: {self.db_save_path}")
         print(f"  Athletes in database: {len(database)}")
         return True
     
-    def _build_database_with_references(self):
+    def _build_database(self):
         """Build face database and track which images were used."""
         builder = FaceDatabaseBuilder()
         database = builder.build(self.database_dir, self.db_save_path, save_references=True)
