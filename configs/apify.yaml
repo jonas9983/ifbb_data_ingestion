@@ -4,7 +4,9 @@ settings:
   
   download_folder: "./data/insta/instagram_downloads"
   database_folder: "./data/faces/database"
+  validation_folder : "./data/faces/validation"
   face_db_path: "./data/faces/face_db.npz"
 
 athletes:
   - "fitnessbyaims"
+  - "ahmd_ashkanani"  

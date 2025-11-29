@@ -87,7 +87,7 @@ class DatabaseWorkflow:
         
         for athlete in athletes:
             source_dir = os.path.join(self.download_dir, athlete)
-            filter_tool.filter_directory(source_dir, self.validation_dir, athlete)
+            filter_tool.filter_directory(source_dir = source_dir, target_dir = self.validation_dir, athlete_name = athlete)
         
         print(f"\n✓ Filtering complete. Review: {self.validation_dir}/\n")
     
