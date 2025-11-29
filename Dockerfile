@@ -1,4 +1,3 @@
-# Use a base image with Python (or any runtime your script needs)
 FROM python:3.11-slim
 
 # Set the working directory inside the container

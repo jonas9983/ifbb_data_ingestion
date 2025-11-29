@@ -1,6 +1,11 @@
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning, module="sklearn")
+warnings.filterwarnings("ignore", message=".*rcond.*")
+
 import os
 import cv2
 import yaml
+import shutil
 import argparse
 from typing import Dict, Any
 from insightface.app import FaceAnalysis
@@ -8,12 +13,13 @@ from insightface.app import FaceAnalysis
 from src.etl.extraction.apify_extraction import InstagramScraper, BillingGuard, APIFY_API_TOKEN
 from src.services.faces.face_recognizer import FaceDatabaseBuilder
 
-
 class SingleFaceFilter:
     """Filters images to only those with exactly one face."""
     
-    def __init__(self, providers=['CPUExecutionProvider']):
+    def __init__(self, min_images: int, max_images: int, providers=['CPUExecutionProvider']):
         self.app = FaceAnalysis(name="buffalo_l", providers=providers)
+        self.min_images = min_images
+        self.max_images = max_images
         self.app.prepare(ctx_id=0, det_size=(640, 640))
     
     def filter_directory(self, source_dir: str, target_dir: str, athlete_name: str):
@@ -25,8 +31,9 @@ class SingleFaceFilter:
             return 0
         
         images = [f for f in os.listdir(source_dir) 
-                  if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
-        
+                  if f.lower().endswith(('.png', '.jpg', '.jpeg'))] 
+        # This discards the directories that are inside which are frames from the video posts.
+        # The data collection now is different so it makes more sense to do it like this        
         single_face_count = 0
         
         for img_name in images:
@@ -35,17 +42,18 @@ class SingleFaceFilter:
             
             if img is None:
                 continue
-            
+
+            # Get faces from the img            
             faces = self.app.get(img)
             
             if len(faces) == 1:
                 target_path = os.path.join(athlete_validation_dir, img_name)
                 cv2.imwrite(target_path, img)
                 single_face_count += 1
-        
-        print(f"  {athlete_name}: {single_face_count} single-face images")
-        return single_face_count
-
+                
+                if single_face_count >= self.max_images:
+                    print(f"Max images ({self.max_images}) Reached")
+                    return
 
 class DatabaseWorkflow:
     """Orchestrates the complete database building workflow."""
@@ -55,7 +63,8 @@ class DatabaseWorkflow:
         self.config = self._load_config(config_path)
 
         self.min_images = self.config['settings'].get('min_images_per_athlete', 3)
-        self.download_dir = self.config['settings']['download_folder']
+        self.max_images = self.config['settings'].get("max_images_per_athlete", 50)
+        self.download_folder = self.config['settings']['download_folder']
         self.validation_dir = self.config['settings'].get('validation_folder', 'validation')
         self.database_dir = self.config['settings'].get('database_folder', 'database')
         self.npz_basename = self.config['settings'].get('npz_basename', 'face_db.npz')
@@ -83,12 +92,12 @@ class DatabaseWorkflow:
         print("STEP 2: FILTERING SINGLE-FACE IMAGES")
         print("="*60)
         
-        filter_tool = SingleFaceFilter()
+        filter_tool = SingleFaceFilter(min_images = self.min_images, max_images = self.max_images)
         athletes = self.config['athletes']
         
         for athlete in athletes:
             print(f"Processing {athlete}")
-            source_dir = os.path.join(self.download_dir, athlete)
+            source_dir = os.path.join(self.download_folder, athlete)
             filter_tool.filter_directory(source_dir = source_dir, target_dir = self.validation_dir, athlete_name = athlete)
         
         print(f"\n✓ Filtering complete. Review: {self.validation_dir}/\n")
@@ -97,10 +106,9 @@ class DatabaseWorkflow:
         print("\n" + "="*60)
         print("STEP 3: MANUAL VALIDATION")
         print("="*60)
-        print(f"\nReview images in: {self.validation_dir}/")
-        print(f"Move validated images to: {self.database_dir}/\n")
-        # TODO: add logic to move images from self.validation_dir to self.database_dir
+        print(f"\n Validate images in: {self.validation_dir}/")
         input("Press Enter when ready to build database...")
+        shutil.copytree(src = self.validation_dir, dst = self.database_dir)
     
     def step4_build_database(self):
         print("\n" + "="*60)

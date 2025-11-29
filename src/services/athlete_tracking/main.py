@@ -10,7 +10,6 @@ import numpy as np
 from typing import Tuple, Optional
 from services.faces.face_recognizer import FaceRecognizer
 
-# Import modular components
 from detection import AthleteDetector
 from services.athlete_tracking.swap_detection import SwapDetector
 from yolo_segmentation import YOLOSegmentationModel 
@@ -35,7 +34,6 @@ class AthletePositionTracker:
         )
         print("Person segmentation model loaded.")
         
-        # Initialize AthleteDetector
         self.detector = AthleteDetector(
             face_recognizer,
             person_model,

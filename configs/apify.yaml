@@ -1,9 +1,10 @@
 settings:
   max_posts_per_user: 3
   min_images_per_athlete: 3
+  max_images_per_athlete: 50
   
   download_folder: "./data/insta/instagram_downloads"
-  database_folder: "./data/faces/database"
+  database_folder: "./data/faces/database_temp"
   validation_folder : "./data/faces/validation"
   npz_basename: "face_db.npz"
 
