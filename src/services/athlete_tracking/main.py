@@ -8,11 +8,11 @@ import json
 import argparse
 import numpy as np
 from typing import Tuple, Optional
-from services.faces.face_recognizer import FaceRecognizer
+from src.services.faces.face_recognizer import FaceRecognizer
 
-from detection import AthleteDetector
-from services.athlete_tracking.swap_detection import SwapDetector
-from yolo_segmentation import YOLOSegmentationModel 
+from src.services.athlete_tracking.detection import AthleteDetector
+from src.services.athlete_tracking.swap_detection import SwapDetector
+from src.services.athlete_tracking.yolo_segmentation import YOLOSegmentationModel 
 
 class AthletePositionTracker:
     def __init__(
@@ -170,8 +170,8 @@ def main(args):
     )
     
     # Setup output directory
-    processed_dir = os.path.join(args.data_dir, "processed")
-    os.makedirs(processed_dir, exist_ok=True)
+    output_dir = os.path.join(args.data_dir, args.processed_dir)
+    os.makedirs(output_dir, exist_ok=True)
     
     # Get all images
     all_images = sorted(
@@ -213,13 +213,13 @@ def main(args):
         )
         
         # Save processed image
-        cv2.imwrite(os.path.join(processed_dir, img_name), img)
+        cv2.imwrite(os.path.join(output_dir, img_name), img)
     
     # Print summary
     tracker.print_summary()
     
     # Export events to JSON
-    events_path = os.path.join(args.data_dir, "processed", "tracking_events.json")
+    events_path = os.path.join(args.data_dir, args.output_dir, "tracking_events.json")
     tracker.export_events(events_path)
 
 
@@ -230,11 +230,12 @@ if __name__ == "__main__":
     
     parser.add_argument("--data_dir", required=True, help="Directory containing image frames.")
     parser.add_argument("--db", required=True, help="Path to the saved face database (.npz file).")
+    parser.add_argument("--processed_dir", required = False, type = str, default= "processed", help="Define where the processed images will be saved")
     parser.add_argument("--threshold", type=float, default=0.35, help="Recognition cosine similarity threshold.")
     parser.add_argument("--confidence", type=float, default=0.5, help="Confidence threshold for person detection.")
     parser.add_argument("--frame-range", type=str, default=None, help="Frame range 'start:end:step'")
     parser.add_argument("--tracker-config", type=str, default=None, help="Custom BoT-SORT YAML config.")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging and visualization.")
-    
+
     args = parser.parse_args()
     main(args)
