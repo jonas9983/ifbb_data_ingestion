@@ -206,7 +206,7 @@ class SwapDetector:
             elif ordered_athletes == prev_lineup:
                 self.record_event(frame_number, frame_name, ordered_athletes, "stable_lineup")
         
-        # 3. Update State (Intelligent Update)
+        # 3. Update State
         # We only update if the current state is stable or growing.
         if len(current_positions) > 0:
             if len(current_positions) >= len(self.last_frame_positions):

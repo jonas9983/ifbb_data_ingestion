@@ -20,7 +20,7 @@ class DetectedAthlete:
     is_front_row: bool = True
     # DEBUG FIELDS
     debug_face_score: float = 0.0
-    debug_raw_face_name: str = "None" 
+    debug_raw_face_name: str = "None"
 
 class AthleteDetector:
     def __init__(self, face_recognizer, person_detector=None, confidence_threshold=0.5, debug_mode=False):
@@ -74,6 +74,88 @@ class AthleteDetector:
                 best_score = score
                 best_face = face
         return best_face
+    
+    def _is_marshall(self, bbox: List[int], mask: Optional[np.ndarray], img: np.ndarray) -> bool:
+        """
+        Detect if this person is the marshall (wearing black).
+        
+        Uses multiple signals:
+        1. Dark clothing (primary indicator)
+        2. Body shape/aspect ratio (marshalls often wear pants, not posing trunks)
+        3. Position movement patterns (optional)
+        """
+        x1, y1, x2, y2 = bbox
+        h, w = img.shape[:2]
+        
+        # Ensure bbox is within image bounds
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(w, x2), min(h, y2)
+        
+        if x2 <= x1 or y2 <= y1:
+            return False
+        
+        # Use mask if available (more accurate)
+        if mask is not None:
+            # Sample pixels where mask is active
+            mask_bool = mask > 0
+            if not np.any(mask_bool):
+                return False
+            
+            masked_pixels = img[mask_bool]
+            
+            # Convert to HSV for better color detection
+            hsv_pixels = cv2.cvtColor(masked_pixels.reshape(-1, 1, 3), cv2.COLOR_BGR2HSV)
+            
+            # Check Value (brightness) channel
+            v_channel = hsv_pixels[:, 0, 2]
+            mean_brightness = np.mean(v_channel)
+            
+            # Black threshold - tune this based on your lighting
+            is_dark = mean_brightness < 70
+            
+            # Additional check: low saturation (black/gray vs colored)
+            s_channel = hsv_pixels[:, 0, 1]
+            mean_saturation = np.mean(s_channel)
+            is_unsaturated = mean_saturation < 80
+            
+            return is_dark and is_unsaturated
+        
+        # Strategy 2: Fallback to bbox sampling
+        else:
+            # Sample the torso region (middle 50% of bbox)
+            bbox_h, bbox_w = y2 - y1, x2 - x1
+            torso_y1 = int(y1 + bbox_h * 0.3)
+            torso_y2 = int(y1 + bbox_h * 0.7)
+            torso_x1 = int(x1 + bbox_w * 0.2)
+            torso_x2 = int(x2 - bbox_w * 0.2)
+            
+            # Ensure valid region
+            torso_y1, torso_y2 = max(0, torso_y1), min(h, torso_y2)
+            torso_x1, torso_x2 = max(0, torso_x1), min(w, torso_x2)
+            
+            if torso_y2 <= torso_y1 or torso_x2 <= torso_x1:
+                return False
+            
+            torso_region = img[torso_y1:torso_y2, torso_x1:torso_x2]
+            
+            if torso_region.size == 0:
+                return False
+            
+            # Convert to HSV
+            hsv = cv2.cvtColor(torso_region, cv2.COLOR_BGR2HSV)
+            
+            # Check brightness
+            v_channel = hsv[:, :, 2]
+            mean_brightness = np.mean(v_channel)
+            
+            # Check saturation
+            s_channel = hsv[:, :, 1]
+            mean_saturation = np.mean(s_channel)
+            
+            is_dark = mean_brightness < 70
+            is_unsaturated = mean_saturation < 80
+            
+            return is_dark and is_unsaturated
 
     def detect_and_associate(self, img, check_depth: bool = False) -> List[DetectedAthlete]:
         img_h, img_w = img.shape[:2]
@@ -100,8 +182,28 @@ class AthleteDetector:
             conf = float(detections.confidence[i])
             track_id = int(detections.tracker_id[i]) if detections.tracker_id is not None else -1
             
+            # Filter out detections at the very bottom (likely partial bodies)
             if bbox[3] > (img_h * 0.95) and (bbox[3] - bbox[1]) < (img_h * 0.15):
                 continue
+            
+            # Filter out marshall BEFORE face matching
+            if self._is_marshall(bbox.tolist(), mask, img):
+                if self.debug_mode:
+                    print(f"[Track {track_id}] Detected as MARSHALL - skipping")
+                
+                # Create a special athlete object for visualization
+                marshall = DetectedAthlete(
+                    name="MARSHALL",
+                    track_id=track_id,
+                    person_bbox=bbox.tolist(),
+                    mask=mask,
+                    center_x=(bbox[0] + bbox[2]) / 2,
+                    confidence=conf,
+                    face_bbox=None,
+                    is_front_row=False  # Don't include in swap detection
+                )
+                detected_athletes.append(marshall)
+                continue  # Skip all face matching and tracking logic
 
             assigned_name = "Unknown"
             
@@ -119,10 +221,10 @@ class AthleteDetector:
                 new_face_score = matched_face['score']
                 
                 for idx, f in enumerate(faces):
-                    if f is matched_face: used_faces_indices.add(idx)
+                    if f is matched_face: 
+                        used_faces_indices.add(idx)
 
-            # --- LOGIC TRACE ---
-            # We build the debug string but only print it if debug_mode is True
+            # --- TRACKING LOGIC ---
             debug_log = f"[Track {track_id}] "
             
             # Case A: Existing History
@@ -156,7 +258,6 @@ class AthleteDetector:
             else:
                 debug_log += "Unknown."
 
-            # ONLY PRINT IF DEBUG MODE IS ON
             if self.debug_mode:
                 print(debug_log)
 
@@ -173,12 +274,15 @@ class AthleteDetector:
             )
             detected_athletes.append(athlete)
         
+        # 4. Depth filtering
         if check_depth and detected_athletes:
             front, back = self.depth_analyzer.filter_front_row_athletes(
                 detected_athletes, img_h, verbose=False
             )
-            for a in front: a.is_front_row = True
-            for a in back: a.is_front_row = False
+            for a in front: 
+                a.is_front_row = True
+            for a in back: 
+                a.is_front_row = False
             return front + back
             
         return detected_athletes
@@ -190,8 +294,12 @@ class AthleteDetector:
         sorted_athletes = sorted(athletes, key=lambda x: x.is_front_row)
         
         for athlete in sorted_athletes:
-            color = (0, 255, 0) if athlete.is_front_row else (0, 0, 255)
-            row_tag = "[FRONT]" if athlete.is_front_row else "[BACK]"
+            if athlete.name == "MARSHALL":
+                color = (128, 128, 128)  # Gray
+                row_tag = "[MARSHALL]"
+            else:
+                color = (0, 255, 0) if athlete.is_front_row else (0, 0, 255)
+                row_tag = "[FRONT]" if athlete.is_front_row else "[BACK]"
             
             # 1. Draw MASK
             if athlete.mask is not None:

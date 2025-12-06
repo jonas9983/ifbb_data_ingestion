@@ -65,10 +65,12 @@ class AthletePositionTracker:
         self.last_gray_frame = current_gray
         
         if is_cut:
-            print("=" * 60)
-            print(f"🚨 **CAMERA CUT DETECTED** in: {frame_name} (Avg Diff: {avg_diff:.2f})")
-            print("Resetting tracking state to prevent false swap detection.")
-            print("=" * 60)
+            print(f" CAMERA CUT: {frame_name}")
+            
+            self.detector.person_detector.model.predictor.trackers = []
+            
+            self.detector.athlete_registry.clear()
+            
             return True
         
         return False
@@ -96,7 +98,8 @@ class AthletePositionTracker:
         # 2. Filter: We only want to track SWAPS for NAMED front row athletes
         valid_front_row_athletes = [
             a for a in all_athletes 
-            if a.is_front_row and a.name != "Unknown"
+            if a.is_front_row and a.name != "Unknown" and a.name != "MARSHALL"
+            
         ]
         
         # Create a dictionary of recognized athlete positions (Name: Center_X)
