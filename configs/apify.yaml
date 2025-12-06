@@ -1,14 +1,27 @@
 settings:
-  max_posts_per_user: 3
+  max_posts_per_user: 20
   min_images_per_athlete: 3
   max_images_per_athlete: 50
   
-  download_folder: "./data/insta/instagram_downloads"
-  database_folder: "./data/faces/database_temp"
+  download_folder: "./data/insta/instagram_downloads_romania"
+  database_folder: "./data/faces/database_romania"
   validation_folder : "./data/faces/validation"
   npz_basename: "face_db.npz"
 
 athletes:
-  - "fitnessbyaims"
-  - "ahmd_ashkanani"
-  - "keone_prodigy"
+  - bahar_ayra_ifbbpro
+  - fitness.prinzessin
+  - adelaondrejovicova
+  - karolajna_figure.pro
+  - hannah_prause_ifbbpro
+  - stefanasandu_ifbbpro
+  - snezhana_vlahova_ifbb.pro
+  - carina.brill.ifbbpro
+  - annakoka_official
+  - lagrace_ifbbpro
+  - mmvic91
+  - anna.ladurner.ifbbpro
+  - chiacecchi_ifbbpro
+  - massylwna_ifbbpro
+  - sarahltk79
+  - manuela_matteucci_ifbbpro
