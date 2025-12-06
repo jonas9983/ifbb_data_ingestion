@@ -134,7 +134,7 @@ class AthletePositionTracker:
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(events_data, f, indent=2, ensure_ascii=False)
         
-        print(f"\n✅ Events exported to: {output_path}")
+        print(f"\n Events exported to: {output_path}")
     
     def print_summary(self):
         """Print a summary of tracking results."""
@@ -222,7 +222,7 @@ def main(args):
     tracker.print_summary()
     
     # Export events to JSON
-    events_path = os.path.join(args.data_dir, args.output_dir, "tracking_events.json")
+    events_path = os.path.join(args.processed_dir, "tracking_events.json")
     tracker.export_events(events_path)
 
 
