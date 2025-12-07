@@ -7,7 +7,7 @@ match_thresh: 0.7
 gmc_method: sparseOptFlow
 replay_with_len: 10
 
-with_reid: False
+with_reid: True
 proximity_thresh: 0.6
 appearance_thresh: 0.5
 
