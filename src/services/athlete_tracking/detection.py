@@ -32,6 +32,7 @@ class AthleteDetector:
         
         self.athlete_registry: Dict[int, str] = {} 
         self.overwrite_threshold = 0.75
+        self.marshall_track_id = -1
 
     def detect_faces(self, img) -> List[Dict]:
         """Standard face detection"""
@@ -77,85 +78,61 @@ class AthleteDetector:
     
     def _is_marshall(self, bbox: List[int], mask: Optional[np.ndarray], img: np.ndarray) -> bool:
         """
-        Detect if this person is the marshall (wearing black).
-        
-        Uses multiple signals:
-        1. Dark clothing (primary indicator)
-        2. Body shape/aspect ratio (marshalls often wear pants, not posing trunks)
-        3. Position movement patterns (optional)
+        Strict Marshal Detector.
+        Checks for the ABSENCE of BRIGHT SKIN colors in the central body column.
         """
         x1, y1, x2, y2 = bbox
         h, w = img.shape[:2]
         
-        # Ensure bbox is within image bounds
+        # Validations
         x1, y1 = max(0, x1), max(0, y1)
         x2, y2 = min(w, x2), min(h, y2)
+        if x2 <= x1 or y2 <= y1: return False
         
-        if x2 <= x1 or y2 <= y1:
-            return False
-        
-        # Use mask if available (more accurate)
+        bbox_h, bbox_w = y2 - y1, x2 - x1
+        if bbox_h < 50: return False 
+
+        # 1. Prepare Image (Masking is Crucial)
+        patch = img[y1:y2, x1:x2].copy()
         if mask is not None:
-            # Sample pixels where mask is active
-            mask_bool = mask > 0
-            if not np.any(mask_bool):
-                return False
-            
-            masked_pixels = img[mask_bool]
-            
-            # Convert to HSV for better color detection
-            hsv_pixels = cv2.cvtColor(masked_pixels.reshape(-1, 1, 3), cv2.COLOR_BGR2HSV)
-            
-            # Check Value (brightness) channel
-            v_channel = hsv_pixels[:, 0, 2]
-            mean_brightness = np.mean(v_channel)
-            
-            # Black threshold - tune this based on your lighting
-            is_dark = mean_brightness < 70
-            
-            # Additional check: low saturation (black/gray vs colored)
-            s_channel = hsv_pixels[:, 0, 1]
-            mean_saturation = np.mean(s_channel)
-            is_unsaturated = mean_saturation < 80
-            
-            return is_dark and is_unsaturated
+            mask_crop = mask[y1:y2, x1:x2]
+            mask_bool = mask_crop > 0
+            patch[~mask_bool] = 0 # Black out background
+
+        # 2. Define Central Column (Neck to Knees, Center Width)
+        p_h, p_w = patch.shape[:2]
+        roi = patch[int(p_h*0.15):int(p_h*0.85), int(p_w*0.30):int(p_w*0.70)]
+        if roi.size == 0: return False
+
+        # 3. Calculate "Bright Skin" Score
+        hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
         
-        # Strategy 2: Fallback to bbox sampling
+        # STRICT THRESHOLD: Skin must be BRIGHT (Value > 100). 
+        MIN_BRIGHTNESS = 100 
+        
+        lower1 = np.array([0, 40, MIN_BRIGHTNESS]) 
+        upper1 = np.array([25, 255, 255])
+        lower2 = np.array([160, 40, MIN_BRIGHTNESS])
+        upper2 = np.array([180, 255, 255])
+        
+        skin_mask = cv2.inRange(hsv_roi, lower1, upper1) + cv2.inRange(hsv_roi, lower2, upper2)
+        
+        skin_pixels = cv2.countNonZero(skin_mask)
+        
+        # Calculate ratio against NON-BLACK pixels only (the person)
+        if mask is not None:
+            v_channel = hsv_roi[:, :, 2]
+            person_pixels = cv2.countNonZero(v_channel) # Pixels that are not black background
+            total_pixels = person_pixels if person_pixels > 0 else 1
         else:
-            # Sample the torso region (middle 50% of bbox)
-            bbox_h, bbox_w = y2 - y1, x2 - x1
-            torso_y1 = int(y1 + bbox_h * 0.3)
-            torso_y2 = int(y1 + bbox_h * 0.7)
-            torso_x1 = int(x1 + bbox_w * 0.2)
-            torso_x2 = int(x2 - bbox_w * 0.2)
+            total_pixels = roi.shape[0] * roi.shape[1]
             
-            # Ensure valid region
-            torso_y1, torso_y2 = max(0, torso_y1), min(h, torso_y2)
-            torso_x1, torso_x2 = max(0, torso_x1), min(w, torso_x2)
-            
-            if torso_y2 <= torso_y1 or torso_x2 <= torso_x1:
-                return False
-            
-            torso_region = img[torso_y1:torso_y2, torso_x1:torso_x2]
-            
-            if torso_region.size == 0:
-                return False
-            
-            # Convert to HSV
-            hsv = cv2.cvtColor(torso_region, cv2.COLOR_BGR2HSV)
-            
-            # Check brightness
-            v_channel = hsv[:, :, 2]
-            mean_brightness = np.mean(v_channel)
-            
-            # Check saturation
-            s_channel = hsv[:, :, 1]
-            mean_saturation = np.mean(s_channel)
-            
-            is_dark = mean_brightness < 70
-            is_unsaturated = mean_saturation < 80
-            
-            return is_dark and is_unsaturated
+        skin_ratio = skin_pixels / total_pixels
+        
+        # 4. Decision
+        # Athletes are > 0.40. Marshal is usually < 0.05.
+        # We use 0.10 to be very strict and avoid false positives (the "Two Marshalls" bug).
+        return skin_ratio < 0.10
 
     def detect_and_associate(self, img, check_depth: bool = False) -> List[DetectedAthlete]:
         img_h, img_w = img.shape[:2]
@@ -166,7 +143,6 @@ class AthleteDetector:
         # 2. Detect Faces
         faces = self.detect_faces(img)
         
-        # DEBUG LOGGING
         if self.debug_mode and len(faces) > 0:
             print(f"\n--- Faces Detected: {len(faces)} ---")
             for f in faces:
@@ -182,16 +158,38 @@ class AthleteDetector:
             conf = float(detections.confidence[i])
             track_id = int(detections.tracker_id[i]) if detections.tracker_id is not None else -1
             
-            # Filter out detections at the very bottom (likely partial bodies)
+            # Filter partial bodies
             if bbox[3] > (img_h * 0.95) and (bbox[3] - bbox[1]) < (img_h * 0.15):
                 continue
             
-            # Filter out marshall BEFORE face matching
-            if self._is_marshall(bbox.tolist(), mask, img):
-                if self.debug_mode:
-                    print(f"[Track {track_id}] Detected as MARSHALL - skipping")
+            
+            # Step A: Check Visuals regardless of Track ID
+            looks_like_marshall = self._is_marshall(bbox.tolist(), mask, img)
+            
+            is_marshall = False
+
+            if looks_like_marshall:
+                is_marshall = True
+
+                self.marshall_track_id = track_id
                 
-                # Create a special athlete object for visualization
+                if track_id in self.athlete_registry:
+                    if self.debug_mode:
+                        print(f"[Fix] ID {track_id} visually identified as Marshall. Cleaning old athlete registry.")
+                    del self.athlete_registry[track_id]
+
+            elif track_id == self.marshall_track_id:
+                
+                if self.debug_mode:
+                    print(f"[Fix] Track {track_id} has Marshall ID but looks like Athlete. Revoking Marshall status.")
+                
+                is_marshall = False
+                # We 'release' the global ID so it can be claimed by the real Marshall (visual match)
+                self.marshall_track_id = -1
+            
+
+            if is_marshall:
+                # Create the Marshal object and SKIP everything else
                 marshall = DetectedAthlete(
                     name="MARSHALL",
                     track_id=track_id,
@@ -200,10 +198,10 @@ class AthleteDetector:
                     center_x=(bbox[0] + bbox[2]) / 2,
                     confidence=conf,
                     face_bbox=None,
-                    is_front_row=False  # Don't include in swap detection
+                    is_front_row=False
                 )
                 detected_athletes.append(marshall)
-                continue  # Skip all face matching and tracking logic
+                continue
 
             assigned_name = "Unknown"
             

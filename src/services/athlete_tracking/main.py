@@ -222,7 +222,7 @@ def main(args):
     tracker.print_summary()
     
     # Export events to JSON
-    events_path = os.path.join(args.processed_dir, "tracking_events.json")
+    events_path = os.path.join(args.data_dir, args.processed_dir, "tracking_events.json")
     tracker.export_events(events_path)
 
 
