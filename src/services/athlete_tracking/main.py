@@ -65,11 +65,16 @@ class AthletePositionTracker:
         self.last_gray_frame = current_gray
         
         if is_cut:
-            print(f" CAMERA CUT: {frame_name}")
+            print(f"CAMERA CUT: {frame_name}")
             
-            self.detector.person_detector.model.predictor.trackers = []
+            if hasattr(self.detector.person_detector.model, 'predictor') and \
+            hasattr(self.detector.person_detector.model.predictor, 'trackers'):
+                for tracker in self.detector.person_detector.model.predictor.trackers:
+                    tracker.reset()
             
+            # Clear athlete registry
             self.detector.athlete_registry.clear()
+            self.detector.marshall_track_id = -1  # Also reset marshall tracking
             
             return True
         
