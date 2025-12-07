@@ -65,10 +65,12 @@ class AthletePositionTracker:
         self.last_gray_frame = current_gray
         
         if is_cut:
-            print("=" * 60)
-            print(f"🚨 **CAMERA CUT DETECTED** in: {frame_name} (Avg Diff: {avg_diff:.2f})")
-            print("Resetting tracking state to prevent false swap detection.")
-            print("=" * 60)
+            print(f" CAMERA CUT: {frame_name}")
+            
+            self.detector.person_detector.model.predictor.trackers = []
+            
+            self.detector.athlete_registry.clear()
+            
             return True
         
         return False
@@ -96,7 +98,8 @@ class AthletePositionTracker:
         # 2. Filter: We only want to track SWAPS for NAMED front row athletes
         valid_front_row_athletes = [
             a for a in all_athletes 
-            if a.is_front_row and a.name != "Unknown"
+            if a.is_front_row and a.name != "Unknown" and a.name != "MARSHALL"
+            
         ]
         
         # Create a dictionary of recognized athlete positions (Name: Center_X)
@@ -131,7 +134,7 @@ class AthletePositionTracker:
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(events_data, f, indent=2, ensure_ascii=False)
         
-        print(f"\n✅ Events exported to: {output_path}")
+        print(f"\n Events exported to: {output_path}")
     
     def print_summary(self):
         """Print a summary of tracking results."""
@@ -219,7 +222,7 @@ def main(args):
     tracker.print_summary()
     
     # Export events to JSON
-    events_path = os.path.join(args.data_dir, args.output_dir, "tracking_events.json")
+    events_path = os.path.join(args.data_dir, args.processed_dir, "tracking_events.json")
     tracker.export_events(events_path)
 
 
