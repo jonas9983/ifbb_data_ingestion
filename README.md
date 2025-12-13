@@ -1,2 +1,110 @@
-# ifbb_data_ingestion
-Retrieve and ingest data from the IFBB Pro website using webscraping and AI techniques
+# Athlete Position Tracker
+
+A computer vision system that tracks athletes on stage, detects when they swap positions, and identifies marshalls using YOLO segmentation, face recognition, and temporal tracking.
+
+## Features
+
+- **Multi-athlete tracking** using YOLO11 with BoT-SORT
+- **Face recognition** to identify and persist athlete identities
+- **Position swap detection** when athletes change places
+- **Marshall detection** using appearance-based scoring
+- **Camera cut detection** to reset tracking across scene changes
+- **Depth analysis** to distinguish front row from back row athletes
+
+## Installation
+
+Create virtual environment and install the requirements
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+```
+
+## Usage
+
+### Basic Command
+
+```bash
+python src/services/athlete_tracking.py \
+  --data_dir ./frames \
+  --db ./face_database.npz \
+  --processed_dir processed
+```
+
+### Full Options
+
+```bash
+python src/services/athlete_tracking.py \
+  --data_dir ./frames \
+  --db ./face_database.npz \
+  --processed_dir processed \
+  --threshold 0.35 \
+  --confidence 0.5 \
+  --frame-range 0:100:1 \
+  --tracker-config custom_botsort.yaml \
+  --debug
+```
+
+### Parameters
+
+- `--data_dir`: Directory containing input video frames (required)
+- `--db`: Path to face recognition database `.npz` file (required)
+- `--processed_dir`: Output directory for annotated frames (default: `processed`)
+- `--threshold`: Face recognition similarity threshold (default: 0.35)
+- `--confidence`: YOLO detection confidence threshold (default: 0.5)
+- `--frame-range`: Process specific frames `start:end:step` (e.g., `0:1000:2`)
+- `--tracker-config`: Custom BoT-SORT YAML config file
+- `--debug`: Enable debug logging and visualization
+
+## Output
+
+The system generates:
+
+1. **Annotated frames** in the `processed_dir` with:
+   - Color-coded segmentation masks (green=front row, red=back row, gray=marshall)
+   - Athlete names and tracking IDs
+   - Face detection boxes (in debug mode)
+
+2. **tracking_events.json** containing:
+   - All position swap events
+   - Lineup changes
+   - Camera cuts
+   - Frame-by-frame tracking statistics
+
+## Project Structure
+
+```
+
+├── src/
+│   └── services/
+│       ├── faces/
+│       │   └── face_recognizer.py   # Face recognition logic
+│       └── athlete_tracking/
+│           ├── detection.py          # Athlete & marshall detection
+│           ├── swap_detection.py     # Position swap logic
+│           ├── depth_detection.py    # Front/back row filtering
+│           └── yolo_segmentation.py  # YOLO wrapper
+├── configs/
+│     ├── custom_botsort.yaml
+│     └──apify.yaml
+```
+
+## How It Works
+
+1. **Detection**: YOLO11 segments and tracks people across frames
+2. **Recognition**: InsightFace matches detected faces to database
+3. **Association**: Tracks are persistently linked to athlete identities
+4. **Depth Filtering**: Clustering separates front row from back row
+5. **Swap Detection**: Monitors horizontal position changes between known athletes
+6. **Marshall Identification**: Scores individuals based on clothing appearance
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Notes
+
+- Face database must be created separately using InsightFace embeddings
+- YOLO model (`yolo11l-seg.pt`) downloads automatically from Ultralytics
+- Works best with stable camera angles and good lighting
+- Marshall detection assumes dark clothing on torso area
