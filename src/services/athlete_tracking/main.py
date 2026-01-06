@@ -8,6 +8,9 @@ import json
 import argparse
 import numpy as np
 from typing import Tuple, Optional
+from concurrent.futures import ThreadPoolExecutor
+import queue
+import requests
 from src.services.faces.face_recognizer import FaceRecognizer
 
 from src.services.athlete_tracking.detection import AthleteDetector
@@ -164,11 +167,46 @@ def parse_frame_range(range_str: str) -> Tuple[Optional[int], Optional[int], int
     else:
         raise ValueError(f"Invalid frame range format: {range_str}")
 
+def image_provider(start_idx, end_idx, base_url, step=1, buffer_size=60):
+    """Downloads images in a background thread and yields them sequentially with step."""
+    task_queue = queue.Queue(maxsize=buffer_size)
+    session = requests.Session()
+
+    def download_worker(idx):
+        url = base_url.format(idx)
+        try:
+            resp = session.get(url, timeout=10)
+            if resp.status_code == 200:
+                nparr = np.frombuffer(resp.content, np.uint8)
+                img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                return idx, img
+            return idx, None
+        except Exception:
+            return idx, None
+
+    # Generate the list of indices we actually need
+    indices = list(range(start_idx, end_idx + 1, step))
+    
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        # Initial pre-fill of the buffer
+        for i in range(min(len(indices), buffer_size)):
+            task_queue.put(executor.submit(download_worker, indices[i]))
+
+        next_to_submit_idx = buffer_size
+        
+        for i in range(len(indices)):
+            future = task_queue.get()
+            idx, img = future.result()
+            
+            yield idx, img
+
+            # Submit next index in the sequence if available
+            if next_to_submit_idx < len(indices):
+                task_queue.put(executor.submit(download_worker, indices[next_to_submit_idx]))
+                next_to_submit_idx += 1
 
 def main(args):
-    """Main function to process all frames in a directory."""
-    
-    # Initialize tracker with arguments
+    # 1. Initialize Tracker
     tracker = AthletePositionTracker(
         args.db,
         threshold=args.threshold,
@@ -176,74 +214,64 @@ def main(args):
         tracker_config=args.tracker_config,
         debug_mode=args.debug
     )
+
+    # 2. Setup Output Directory
+    os.makedirs(args.output_dir, exist_ok=True)
     
-    # Setup output directory
-    output_dir = os.path.join(args.data_dir, args.processed_dir)
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Get all images
-    all_images = sorted(
-        [f for f in os.listdir(args.data_dir) 
-         if f.lower().endswith((".png", ".jpg", ".jpeg"))]
-    )
-    
-    # Parse frame range if provided
+    # 3. Handle Frame Range and Step
+    start_f, end_f, step_f = 1, 10208, 1
     if args.frame_range:
-        start, end, step = parse_frame_range(args.frame_range)
-        start = start if start is not None else 0
-        end = end if end is not None else len(all_images)
-        images = all_images[start:end:step]
-        print(f"Processing frames {start} to {end} with step {step}")
-        print(f"Total frames to process: {len(images)} (out of {len(all_images)} total)")
-    else:
-        images = all_images
-        print(f"Processing all {len(images)} frames")
-    
-    print("=" * 60)
-    
-    # Process each frame
-    for idx, img_name in enumerate(images):
-        img_path = os.path.join(args.data_dir, img_name)
-        img = cv2.imread(img_path)
+        s, e, step = parse_frame_range(args.frame_range)
+        start_f = s if s is not None else start_f
+        end_f = e if e is not None else end_f
+        step_f = step
+
+    print(f"--- Processing: {start_f} to {end_f} (Step: {step_f}) ---")
+
+    # 4. Process Loop
+    for frame_number, img in image_provider(start_f, end_f, args.base_url, step=step_f):
+        if img is None:
+            print(f"Skip: Frame {frame_number} (Download Failed)")
+            continue
         
-        if img is None: continue
-        
-        # Calculate actual frame number in original sequence
-        frame_number = all_images.index(img_name)
+        frame_name = f"shots_{frame_number:05d}.png"
         
         # Process frame
         tracker.process_frame(
             img, 
-            img_name, 
+            frame_name, 
             frame_number,
             show_person_bbox=True,
             filter_front_row=True
         )
         
-        # Save processed image
-        cv2.imwrite(os.path.join(output_dir, img_name), img)
-    
-    # Print summary
-    tracker.print_summary()
-    
-    # Export events to JSON
-    events_path = os.path.join(args.data_dir, args.processed_dir, "tracking_events.json")
-    tracker.export_events(events_path)
+        # 5. Save if requested (Useful for verifying temporal logic)
+        if args.save_processed:
+            save_path = os.path.join(args.output_dir, frame_name)
+            cv2.imwrite(save_path, img)
 
+        if args.debug:
+            cv2.imshow("Athlete Tracking", img)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+    # 6. Cleanup & Export
+    tracker.print_summary()
+    events_path = os.path.join(args.output_dir, "tracking_events.json")
+    tracker.export_events(events_path)
+    cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Track athlete positions and detect swaps (Refactored)"
-    )
-    
-    parser.add_argument("--data_dir", required=True, help="Directory containing image frames.")
-    parser.add_argument("--db", required=True, help="Path to the saved face database (.npz file).")
-    parser.add_argument("--processed_dir", required = False, type = str, default= "processed", help="Define where the processed images will be saved")
-    parser.add_argument("--threshold", type=float, default=0.35, help="Recognition cosine similarity threshold.")
-    parser.add_argument("--confidence", type=float, default=0.5, help="Confidence threshold for person detection.")
-    parser.add_argument("--frame-range", type=str, default=None, help="Frame range 'start:end:step'")
-    parser.add_argument("--tracker-config", type=str, default=None, help="Custom BoT-SORT YAML config.")
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging and visualization.")
+    parser = argparse.ArgumentParser(description="Athlete Tracker")
+    parser.add_argument("--base_url", required=True, help="URL with {:05d}")
+    parser.add_argument("--db", required=True, help="Path to face database")
+    parser.add_argument("--output_dir", required=True, help="Output folder")
+    parser.add_argument("--save_processed", action="store_true", help="Save annotated frames")
+    parser.add_argument("--threshold", type=float, default=0.35)
+    parser.add_argument("--confidence", type=float, default=0.5)
+    parser.add_argument("--frame-range", type=str, default=None, help="'start:end:step'")
+    parser.add_argument("--tracker-config", type=str, default=None)
+    parser.add_argument("--debug", action="store_true")
 
     args = parser.parse_args()
     main(args)
