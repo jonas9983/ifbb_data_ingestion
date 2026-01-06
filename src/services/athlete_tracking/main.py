@@ -226,7 +226,7 @@ def main(args):
         end_f = e if e is not None else end_f
         step_f = step
 
-    print(f"--- Processing: {start_f} to {end_f} (Step: {step_f}) ---")
+    print(f"--- Processing {(end_f - start_f)/step_f} frames ---")
 
     # 4. Process Loop
     for frame_number, img in image_provider(start_f, end_f, args.base_url, step=step_f):

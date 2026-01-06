@@ -39,7 +39,7 @@ class AthleteDetector:
         self.overwrite_threshold = 0.75
         self.marshall_track_id = -1
         
-        # NEW: Marshall temporal tracking
+        # Marshall temporal tracking
         self.marshall_history: List[Dict] = []  # Track last N frames
         self.marshall_history_window = 5
         self.marshall_min_score = 0.6  # Minimum score to be considered Marshall
