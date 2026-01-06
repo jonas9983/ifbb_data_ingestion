@@ -5,12 +5,25 @@ import argparse
 from insightface.app import FaceAnalysis
 from numpy import dot
 from numpy.linalg import norm
+import onnxruntime as ort
 
+
+# Create a helper to detect the best provider
+def get_optimal_providers():
+    if 'CUDAExecutionProvider' in ort.get_available_providers():
+        return ['CUDAExecutionProvider', 'CPUExecutionProvider']
+    return ['CPUExecutionProvider']
 
 class FaceDatabaseBuilder:
-    def __init__(self, providers=['CPUExecutionProvider']):
-        self.app = FaceAnalysis(name="buffalo_l", providers=providers)
-        self.app.prepare(ctx_id=0, det_size=(640, 640))
+    def __init__(self, providers=None):
+        # Use detected providers if none are passed
+        self.providers = providers if providers else get_optimal_providers()
+        print(f"InsightFace using: {self.providers}")
+        
+        self.app = FaceAnalysis(name="buffalo_l", providers=self.providers)
+        # ctx_id=0 refers to the first GPU. Use -1 for CPU.
+        ctx_id = 0 if 'CUDAExecutionProvider' in self.providers else -1
+        self.app.prepare(ctx_id=ctx_id, det_size=(640, 640))
 
     def build(self, data_dir, save_path, save_references=False):
         """
@@ -75,12 +88,15 @@ class FaceDatabaseBuilder:
 
 
 class FaceRecognizer:
-    def __init__(self, db_path, threshold=0.35, providers=['CPUExecutionProvider']):
+    def __init__(self, db_path, threshold=0.35, providers=None):
         self.db = np.load(db_path, allow_pickle=True)
         self.threshold = threshold
-
-        self.app = FaceAnalysis(name="buffalo_l", providers=providers)
-        self.app.prepare(ctx_id=0, det_size=(640, 640))
+        
+        self.providers = providers if providers else get_optimal_providers()
+        ctx_id = 0 if 'CUDAExecutionProvider' in self.providers else -1
+        
+        self.app = FaceAnalysis(name="buffalo_l", providers=self.providers)
+        self.app.prepare(ctx_id=ctx_id, det_size=(640, 640))
 
     @staticmethod
     def cosine_similarity(a, b):
