@@ -69,9 +69,8 @@ class SwapDetector:
             swaps=None
         )
 
-        # CRUCIAL STEP: Clear historical state
+        # Clear historical state
         self.last_frame_positions = {}
-        # We DO NOT clear self.all_athletes_seen as they are still known.
     
     def update_athletes_seen(self, athletes: List[str]):
         """Track new athletes that appear in the frame."""
