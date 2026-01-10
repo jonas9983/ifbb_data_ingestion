@@ -1,8 +1,3 @@
-"""
-Logs ALL detection data, associations, and events to enable
-robust downstream filtering and validation.
-"""
-
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning, module="sklearn")
 warnings.filterwarnings("ignore", message=".*rcond.*")
@@ -20,7 +15,7 @@ from datetime import datetime
 from src.services.faces.face_recognizer import FaceRecognizer
 from src.services.athlete_tracking.detection import AthleteDetector
 from src.services.athlete_tracking.swap_detection import SwapDetector
-from src.services.athlete_tracking.yolo_segmentation import YOLOSegmentationModel 
+from src.services.athlete_tracking.yolo_segmentation import YOLOSegmentationModel
 from src.services.helpers.frame_logger import FrameLogger
 
 class AthletePositionTracker:
@@ -72,7 +67,7 @@ class AthletePositionTracker:
         self.last_gray_frame = current_gray
         
         if is_cut:
-            print(f"🎬 CAMERA CUT: {frame_name} (diff={avg_diff:.2f})")
+            print(f" CAMERA CUT: {frame_name} (diff={avg_diff:.2f})")
             
             # Reset tracking
             if hasattr(self.detector.person_detector.model, 'predictor') and \
@@ -119,7 +114,7 @@ class AthletePositionTracker:
             for athlete in valid_front_row_athletes
         }
         
-        # Update swap detector
+        # Update swap detector (THIS NOW LOGS EVERY FRAME)
         swap_info = self.swap_detector.update_state(
             current_positions,
             frame_name,
@@ -248,8 +243,8 @@ def main(args):
         end_f = e if e is not None else end_f
         step_f = step
 
-    total_frames = (end_f - start_f) // step_f
-    print(f"--- Processing {total_frames} frames ---")
+    total_frames = (end_f - start_f) // step_f + 1
+    print(f"--- Processing {total_frames} frames (Range: {start_f}-{end_f}, Step: {step_f}) ---")
 
     # Process Loop
     processed_count = 0
@@ -260,7 +255,7 @@ def main(args):
         
         frame_name = f"shots_{frame_number:05d}.png"
         
-        # Process frame (logs automatically)
+        # Process frame (logs automatically to logger)
         tracker.process_frame(
             img, 
             frame_name, 
