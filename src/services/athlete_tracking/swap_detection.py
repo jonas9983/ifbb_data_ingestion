@@ -1,9 +1,3 @@
-"""
-swap_detector.py
-
-Handles the logic for detecting when athletes swap positions on stage.
-"""
-
 from typing import Dict, List, Set, Tuple, Optional
 from dataclasses import dataclass, asdict
 from datetime import datetime
@@ -42,12 +36,16 @@ class SwapDetector:
         self.last_frame_positions: Dict[str, float] = {}
         self.all_athletes_seen: Set[str] = set()
         
-        # Event recording
+        # Event recording (for JSON export only, not for verbose logging)
         self.events: List[EventRecord] = []
         
         # Statistics
         self.frames_with_detection: int = 0
         self.frames_processed: int = 0
+        
+        # Track last swap to prevent repeated console logs
+        self.last_swap_frame: int = -1
+        self.swap_cooldown: int = 10  # Don't print same swap for N frames
         
     def reset_state(
         self, 
@@ -71,6 +69,7 @@ class SwapDetector:
 
         # Clear historical state
         self.last_frame_positions = {}
+        self.last_swap_frame = -1  # Reset swap tracking
     
     def update_athletes_seen(self, athletes: List[str]):
         """Track new athletes that appear in the frame."""
@@ -82,7 +81,8 @@ class SwapDetector:
     def detect_swaps(
         self, 
         current_positions: Dict[str, float], 
-        frame_name: str
+        frame_name: str,
+        frame_number: int
     ) -> List[Tuple[str, str]]:
         """
         Detect if any athletes swapped positions since last frame.
@@ -127,22 +127,24 @@ class SwapDetector:
                 curr_order = "A_left_of_B" if curr_a < curr_b else "B_left_of_A"
                 
                 if prev_order != curr_order:
-                    # Log the swap detection with clear text instead of arrows
-                    prev_relative = f"{athlete_a} was on the {'LEFT' if prev_a < prev_b else 'RIGHT'} of {athlete_b}"
-                    curr_relative = f"{athlete_a} is now on the {'LEFT' if curr_a < curr_b else 'RIGHT'} of {athlete_b}"
-                    
-                    print("=" * 60)
-                    print(f"🎉 POSITION SWAP DETECTED in: {frame_name}")
-                    print(f"   Between: {athlete_a} and {athlete_b}")
-                    print(f"   ---")
-                    print(f"   PREVIOUS FULL LINEUP: {' | '.join(prev_lineup_names)}") 
-                    print(f"   CURRENT FULL LINEUP:  {' | '.join(current_lineup_names)}") 
-                    print(f"   ---")
-                    print(f"   Relative Position Change:")
-                    print(f"     Previous: {prev_relative}")
-                    print(f"     Current:  {curr_relative}")
-                    print("=" * 60)
                     swaps.append((athlete_a, athlete_b))
+                    
+                    if frame_number - self.last_swap_frame > self.swap_cooldown:
+                        prev_relative = f"{athlete_a} was on the {'LEFT' if prev_a < prev_b else 'RIGHT'} of {athlete_b}"
+                        curr_relative = f"{athlete_a} is now on the {'LEFT' if curr_a < curr_b else 'RIGHT'} of {athlete_b}"
+                        
+                        print("=" * 60)
+                        print(f" POSITION SWAP DETECTED in: {frame_name}")
+                        print(f"   Between: {athlete_a} <-> {athlete_b}")
+                        print(f"   ---")
+                        print(f"   PREVIOUS LINEUP: {' | '.join(prev_lineup_names)}") 
+                        print(f"   CURRENT LINEUP:  {' | '.join(current_lineup_names)}") 
+                        print(f"   ---")
+                        print(f"   Change: {prev_relative}")
+                        print(f"           {curr_relative}")
+                        print("=" * 60)
+                        
+                        self.last_swap_frame = frame_number
         
         return swaps
     
@@ -159,7 +161,7 @@ class SwapDetector:
         trigger: str,
         swaps: Optional[List[Tuple[str, str]]] = None
     ):
-        """Record a tracking event."""
+        """Record a tracking event (for JSON export)."""
         event = EventRecord(
             frame_number=frame_number,
             frame_name=frame_name,
@@ -178,6 +180,7 @@ class SwapDetector:
     ) -> Dict:
         """
         Update state and detect changes.
+        Returns swap info for comprehensive logging.
         """
         self.frames_processed += 1
         
@@ -188,25 +191,26 @@ class SwapDetector:
         ordered_athletes = self.get_ordered_athletes(current_positions)
         
         # 1. Detect Swaps by comparing current vs last stable state
-        swaps = self.detect_swaps(current_positions, frame_name)
+        swaps = self.detect_swaps(current_positions, frame_name, frame_number)
         
-        # 2. Record Events
+        # 2. Record Events (for JSON export)
         if swaps:
             # Position change event (Actual swap detected)
             self.record_event(frame_number, frame_name, ordered_athletes, "position_changed", swaps)
+            
+            # This prevents comparing against stale data
+            self.last_frame_positions = current_positions
+            
         elif len(ordered_athletes) > 0:
             prev_lineup = self.get_current_lineup_names()
             
             # Check for lineup changes (athletes appeared/disappeared)
             if ordered_athletes != prev_lineup and len(ordered_athletes) >= len(prev_lineup):
                 self.record_event(frame_number, frame_name, ordered_athletes, "lineup_changed")
-            
-            # Log an event for every detected frame if the lineup is stable
-            elif ordered_athletes == prev_lineup:
-                self.record_event(frame_number, frame_name, ordered_athletes, "stable_lineup")
+                # Update positions on lineup change
+                self.last_frame_positions = current_positions
         
-        # 3. Update State
-        # We only update if the current state is stable or growing.
+        # 3. Update State if current lineup is stable/growing
         if len(current_positions) > 0:
             if len(current_positions) >= len(self.last_frame_positions):
                 self.last_frame_positions = current_positions
@@ -247,7 +251,7 @@ class SwapDetector:
         stats = self.get_statistics()
         
         print("\n" + "=" * 60)
-        print("📊 TRACKING SUMMARY")
+        print(" TRACKING SUMMARY")
         print("=" * 60)
         print(f"Frames processed: {stats['frames_processed']}")
         print(f"Frames with recognized faces: {stats['frames_with_detection']}")
