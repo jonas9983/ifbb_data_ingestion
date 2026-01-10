@@ -160,7 +160,7 @@ class AthletePositionTracker:
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(events_data, f, indent=2, ensure_ascii=False)
         
-        print(f"\n📊 Events exported to: {output_path}")
+        print(f"\n Events exported to: {output_path}")
     
     def export_comprehensive_data(self, output_path: str):
         """
@@ -255,7 +255,7 @@ def main(args):
     processed_count = 0
     for frame_number, img in image_provider(start_f, end_f, args.base_url, step=step_f):
         if img is None:
-            print(f"⚠️  Skip: Frame {frame_number} (Download Failed)")
+            print(f"  Skip: Frame {frame_number} (Download Failed)")
             continue
         
         frame_name = f"shots_{frame_number:05d}.png"
