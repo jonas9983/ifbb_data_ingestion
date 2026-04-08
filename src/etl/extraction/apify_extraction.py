@@ -120,5 +120,5 @@ class InstagramScraper:
         print(f"Saved {count} total images for {folder_name}")
 
 if __name__ == "__main__":
-    scraper = InstagramScraper()
+    scraper = InstagramScraper(config_path = "./configs/apify.yaml")
     scraper.run()

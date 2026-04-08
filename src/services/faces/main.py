@@ -14,7 +14,7 @@ from src.etl.extraction.apify_extraction import InstagramScraper, BillingGuard, 
 from src.services.faces.face_recognizer import FaceDatabaseBuilder
 
 class SingleFaceFilter:
-    """Filters images to only those with exactly one face."""
+    """Filters images to find the highest quality single-face shots."""
     
     def __init__(self, min_images: int, max_images: int, providers=['CPUExecutionProvider']):
         self.app = FaceAnalysis(name="buffalo_l", providers=providers)
@@ -32,9 +32,10 @@ class SingleFaceFilter:
         
         images = [f for f in os.listdir(source_dir) 
                   if f.lower().endswith(('.png', '.jpg', '.jpeg'))] 
-        # This discards the directories that are inside which are frames from the video posts.
-        # The data collection now is different so it makes more sense to do it like this        
-        single_face_count = 0
+        
+        valid_faces = []
+        
+        print(f"Scanning {len(images)} raw images for {athlete_name}...")
         
         for img_name in images:
             img_path = os.path.join(source_dir, img_name)
@@ -43,17 +44,43 @@ class SingleFaceFilter:
             if img is None:
                 continue
 
-            # Get faces from the img            
             faces = self.app.get(img)
             
+            # Only process images where there is exactly ONE face detected
             if len(faces) == 1:
-                target_path = os.path.join(athlete_validation_dir, img_name)
-                cv2.imwrite(target_path, img)
-                single_face_count += 1
+                face = faces[0]
                 
-                if single_face_count >= self.max_images:
-                    print(f"Max images ({self.max_images}) Reached")
-                    return
+                bbox = face.bbox
+                face_width = bbox[2] - bbox[0]
+                face_height = bbox[3] - bbox[1]
+                face_area = face_width * face_height
+                
+                # Baseline Check: Must be decent size and good confidence
+                if face_width > 80 and face_height > 80 and face.det_score > 0.6:
+                    
+                    # Create a quality score: Bigger face + Higher confidence = Better
+                    quality_score = face_area * face.det_score
+                    
+                    valid_faces.append({
+                        'img_name': img_name,
+                        'img_data': img,
+                        'score': quality_score
+                    })
+        
+        # Sort all found faces by their quality score (Highest to lowest)
+        valid_faces.sort(key=lambda x: x['score'], reverse=True)
+        
+        # Slice the list to keep only the Top K images
+        best_faces = valid_faces[:self.max_images]
+        
+        print(f" -> Found {len(valid_faces)} valid faces. Keeping top {len(best_faces)}.")
+        
+        # Save only the absolute best ones to the validation folder
+        for face_data in best_faces:
+            target_path = os.path.join(athlete_validation_dir, face_data['img_name'])
+            cv2.imwrite(target_path, face_data['img_data'])
+            
+        return len(best_faces)
 
 class DatabaseWorkflow:
     """Orchestrates the complete database building workflow."""
