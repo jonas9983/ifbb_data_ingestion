@@ -4,7 +4,7 @@ import numpy as np
 from typing import Tuple, Optional
 from src.services.faces.face_recognizer import FaceRecognizer
 from src.services.athlete_tracking.detection import AthleteDetector
-from src.services.athlete_tracking.swap_detection import SwapDetector
+from src.services.athlete_tracking.swap_detection import TrackingEventLogger
 from src.services.athlete_tracking.yolo_segmentation import YOLOSegmentationModel
 from src.services.helpers.frame_logger import FrameLogger
 
