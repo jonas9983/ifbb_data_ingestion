@@ -11,3 +11,4 @@ onnxruntime-gpu==1.23.2
 ultralytics==8.3.230
 supervision==0.26.1
 lap==0.5.12
+apify-client==2.5.0
