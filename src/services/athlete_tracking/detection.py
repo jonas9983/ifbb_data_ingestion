@@ -39,7 +39,7 @@ class AthleteDetector:
         self.marshall_history_window = 5
         self.marshall_min_score = 0.6 
 
-    # FACE RECOGNITION (CROPPED)
+    # Cropped Face Recognition
     def _recognize_face_in_crop(self, img: np.ndarray, bbox: List[int]) -> Tuple[str, float, Optional[List[int]]]:
         """Crops the image to the person's bounding box and runs face recognition."""
         x1, y1, x2, y2 = bbox
