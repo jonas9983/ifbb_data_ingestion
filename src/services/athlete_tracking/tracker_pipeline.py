@@ -18,7 +18,7 @@ class AthletePositionTracker:
         print("Person segmentation model loaded.")
         
         self.detector = AthleteDetector(face_recognizer, person_model, confidence_threshold=confidence_threshold, debug_mode=debug_mode)
-        self.swap_detector = SwapDetector()
+        self.swap_detector = TrackingEventLogger()
         self.frame_logger = FrameLogger()
         self.last_gray_frame: Optional[np.ndarray] = None
         self.cut_threshold: float = 25.0
