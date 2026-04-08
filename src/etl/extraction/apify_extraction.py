@@ -86,37 +86,38 @@ class InstagramScraper:
             self._download_images(dataset_id, download_dir, athlete)
 
     def _download_images(self, dataset_id: str, base_dir: str, folder_name: str):
-        """Forces all images from this dataset into base_dir/folder_name."""
-        
-        # Create the specific folder for this athlete (from YAML name)
         target_dir = os.path.join(base_dir, folder_name)
         os.makedirs(target_dir, exist_ok=True)
         
         print(f"Downloading images to: {target_dir}")
-        
         dataset_items = self.client.dataset(dataset_id).iterate_items()
         
         count = 0
         for item in dataset_items:
-            url = item.get('displayUrl')
+            urls = []
+            if item.get('childPosts'):
+                for child in item['childPosts']:
+                    if child.get('displayUrl'):
+                        urls.append(child['displayUrl'])
+            elif item.get('displayUrl'):
+                urls.append(item['displayUrl'])
             
-            if not url:
-                continue
+            post_id = item.get('id', 'post')
             
-            # Use post ID for filename
-            filename = f"{item.get('id', 'post')}.jpg"
-            file_path = os.path.join(target_dir, filename)
-            
-            if not os.path.exists(file_path):
-                try:
-                    img_data = requests.get(url).content
-                    with open(file_path, 'wb') as f:
-                        f.write(img_data)
-                    count += 1
-                except Exception as e:
-                    print(f"Error downloading {url}: {e}")
+            for idx, url in enumerate(urls):
+                filename = f"{post_id}_{idx}.jpg"
+                file_path = os.path.join(target_dir, filename)
+                
+                if not os.path.exists(file_path):
+                    try:
+                        img_data = requests.get(url, timeout=10).content
+                        with open(file_path, 'wb') as f:
+                            f.write(img_data)
+                        count += 1
+                    except Exception as e:
+                        print(f"Error downloading {url}: {e}")
 
-        print(f"Saved {count} images for {folder_name}")
+        print(f"Saved {count} total images for {folder_name}")
 
 if __name__ == "__main__":
     scraper = InstagramScraper()
