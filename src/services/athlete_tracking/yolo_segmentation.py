@@ -25,7 +25,8 @@ class YOLOSegmentationModel:
             verbose=False,
             retina_masks=True,
             tracker=self.active_tracker,
-            device=self.device  # <--- Crucial line
+            device=self.device,
+            half = true
         )[0]
 
         detections = sv.Detections.from_ultralytics(results)
