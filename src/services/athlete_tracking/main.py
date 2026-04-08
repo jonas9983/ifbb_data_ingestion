@@ -45,7 +45,7 @@ def main(args):
                 out_path = os.path.join(args.output_dir, "tracking_output.mp4")
                 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
                 video_writer = cv2.VideoWriter(out_path, fourcc, 30.0, (w, h))
-                print(f"🎥 Saving video to {out_path}")
+                print(f" Saving video to {out_path}")
             video_writer.write(img)
 
         if args.debug:
