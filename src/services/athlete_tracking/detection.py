@@ -37,7 +37,6 @@ class AthleteDetector:
         self.marshall_min_score = 0.6 
 
     def detect_faces(self, img) -> List[Dict]:
-        """Global face detection for the entire frame."""
         faces = self.face_recognizer.app.get(img)
         recognized_faces = []
         for face in faces:
@@ -52,7 +51,6 @@ class AthleteDetector:
         return recognized_faces
 
     def _match_face_to_person(self, person_bbox, person_mask, faces_list) -> Optional[Dict]:
-        """Intelligently matches a face to a body using bounding box and mask overlap."""
         if not faces_list: return None
         px1, py1, px2, py2 = person_bbox
         
@@ -135,10 +133,22 @@ class AthleteDetector:
     def detect_and_associate(self, img, check_depth: bool = False) -> List[DetectedAthlete]:
         img_h, img_w = img.shape[:2]
         
-        # Track Persons
+        # 1. Track Persons
         detections = self.person_detector.track(img, threshold=self.confidence_threshold)
-        if self.debug_mode:
-            print(f" YOLO found {len(detections)} bodies ---")
+        
+        # --- STAGE HEURISTIC ---
+        if len(detections) == 0:
+            return []
+            
+        # Check the height of the tallest person detected
+        heights = detections.xyxy[:, 3] - detections.xyxy[:, 1]
+        max_h_ratio = np.max(heights) / img_h
+        
+        # If the tallest person takes up less than 15% of the screen height, it's a crowd/wide shot
+        if max_h_ratio < 0.15:
+            if self.debug_mode:
+                print(f"   [!] Audience/Wide shot detected (Max size: {max_h_ratio:.0%}). Skipping.")
+            return []
         
         # 2. Marshall Detection
         marshall_candidates = []
@@ -201,20 +211,12 @@ class AthleteDetector:
             current_registry_name = self.athlete_registry.get(track_id, "Unknown")
 
             if needs_check:
-                # LAZY LOAD: Only run InsightFace if we actually need it, and only once per frame!
                 if not global_faces_checked:
                     faces = self.detect_faces(img)
                     global_faces_checked = True
-                    if self.debug_mode:
-                        print(f"\n--- InsightFace found {len(faces)} faces in this frame ---")
-                        for f in faces:
-                            print(f"   > Face Match: {f['name']} (Confidence: {f['score']:.4f})")
 
-                # 1. Look for a matching face inside this body
                 avail_faces = [f for idx, f in enumerate(faces) if idx not in used_faces_indices]
                 matched_face = self._match_face_to_person(bbox.tolist(), mask, avail_faces)
-                
-                # Reset the timer since we checked
                 self.frames_since_check[track_id] = 0
                 
                 if matched_face:
@@ -222,20 +224,16 @@ class AthleteDetector:
                     new_face_name = matched_face['name']
                     new_face_score = matched_face['score']
                     
-                    # Mark this face as "used"
                     for idx, f in enumerate(faces):
                         if f is matched_face: used_faces_indices.add(idx)
                         
                     if new_face_name != "Unknown":
                         if current_registry_name == "Unknown":
-                            # It's a valid face and memory is empty -> Save it
                             self.athlete_registry[track_id] = new_face_name
                             assigned_name = new_face_name
                         elif new_face_name == current_registry_name:
-                            # It's the same person, just confirm it
                             assigned_name = current_registry_name
                         elif new_face_score > self.overwrite_threshold:
-                            # It's a NEW person with very high confidence -> Overwrite memory
                             self.athlete_registry[track_id] = new_face_name
                             assigned_name = new_face_name
                         else:
@@ -247,9 +245,6 @@ class AthleteDetector:
             else:
                 self.frames_since_check[track_id] += 1
                 assigned_name = current_registry_name
-
-            if self.debug_mode:
-                print(f"[Track {track_id}] Mem: '{current_registry_name}' | Face: '{new_face_name}' ({new_face_score:.2f}) -> Output: {assigned_name}")
 
             detected_athletes.append(DetectedAthlete(
                 name=assigned_name, track_id=track_id, person_bbox=bbox.tolist(),
@@ -288,17 +283,8 @@ class AthleteDetector:
             x1, y1, x2, y2 = athlete.person_bbox
             label = f"ID:{athlete.track_id} {row_tag} {athlete.name}"
             
-            if self.debug_mode and athlete.debug_marshall_score > 0:
-                label += f" [M:{athlete.debug_marshall_score:.2f}]"
-            
             (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
             cv2.rectangle(img, (x1, y1-20), (x1+tw, y1), color, -1)
             cv2.putText(img, label, (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 2)
-
-            if self.debug_mode and athlete.face_bbox is not None:
-                fx1, fy1, fx2, fy2 = athlete.face_bbox
-                cv2.rectangle(img, (fx1, fy1), (fx2, fy2), (255, 255, 0), 2)
-                raw_info = f"{athlete.debug_raw_face_name} ({athlete.debug_face_score:.2f})"
-                cv2.putText(img, raw_info, (fx1, fy1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
 
         cv2.addWeighted(overlay, alpha, img, 1-alpha, 0, img)

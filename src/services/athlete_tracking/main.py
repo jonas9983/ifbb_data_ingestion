@@ -31,6 +31,7 @@ def main(args):
     # 3. Main Processing Loop
     print(f"\n--- STARTING PROCESSING ---")
     processed_count = 0
+    pipeline_start_time = time.time()
     
     for frame_number, frame_name, img in get_local_images(args.local_cache_dir, start_f, end_f, step_f):
         start_time = time.time()
@@ -43,16 +44,20 @@ def main(args):
             img = cv2.resize(img, (new_width, max_height))
         
         # 1. Track & Detect
-        athletes = tracker.process_frame(img, frame_name, frame_number, show_person_bbox=True, filter_front_row=True)
+        athletes = tracker.process_frame(img, frame_name, frame_number, show_person_bbox=True, filter_front_row=False)
         track_time = time.time() - start_time
         
+        # 2. Print clean console output
         found_names = [a.name for a in athletes if a.name not in ["Unknown", "MARSHALL"]]
-        print(f"Frame {frame_number} | Bodies Tracked: {len(athletes)} | Recognized: {found_names} | Track time: {track_time:.2f}s")
+        
+        if len(athletes) == 0:
+            print(f"Frame {frame_number} | No stage detected. Skipped. | Track time: {track_time:.2f}s")
+        else:
+            print(f"Frame {frame_number} | Bodies Tracked: {len(athletes)} | Recognized: {found_names} | Track time: {track_time:.2f}s")
         
         processed_count += 1
         
         # 3. Save Video
-        vid_start_time = time.time()
         if args.save_video:
             if video_writer is None:
                 h, w = img.shape[:2]
@@ -61,17 +66,18 @@ def main(args):
                 video_writer = cv2.VideoWriter(out_path, fourcc, 30.0, (w, h))
                 print(f" Saving video to {out_path} at {w}x{h} resolution")
             video_writer.write(img)
-            
-        vid_time = time.time() - vid_start_time
-        if args.save_video and args.debug:
-             print(f" -> Video write time: {vid_time:.2f}s")
 
     # 4. Cleanup and Export
     if video_writer:
         video_writer.release()
+        
+    total_time = time.time() - pipeline_start_time
+    fps = processed_count / total_time if total_time > 0 else 0
 
     print("\n" + "="*60)
-    print(f" PROCESSING COMPLETE. Processed {processed_count} frames.")
+    print(f" PROCESSING COMPLETE.")
+    print(f" Processed {processed_count} frames in {total_time:.2f} seconds.")
+    print(f" Average Speed: {fps:.2f} FPS")
     print("="*60)
     
     tracker.print_summary()
