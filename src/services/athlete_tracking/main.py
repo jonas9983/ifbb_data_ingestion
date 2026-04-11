@@ -7,13 +7,10 @@ import cv2
 import time
 import argparse
 from src.services.athlete_tracking.tracker_pipeline import AthletePositionTracker
-from src.services.helpers.video_utils import parse_frame_range, download_frames_parallel, get_local_images
+from src.services.helpers.video_utils import parse_frame_range, get_video_frames
 
 def main(args):
     start_f, end_f, step_f = parse_frame_range(args.frame_range)
-
-    # 1. Ensure Data exists
-    download_frames_parallel(args.base_url, args.local_cache_dir, start_f, end_f, step_f)
 
     # 2. Initialize Pipeline
     print("\n--- INITIALIZING MODELS ---")
@@ -33,7 +30,8 @@ def main(args):
     processed_count = 0
     pipeline_start_time = time.time()
     
-    for frame_number, frame_name, img in get_local_images(args.local_cache_dir, start_f, end_f, step_f):
+    # CHANGED: Now iterating directly over the video file!
+    for frame_number, frame_name, img in get_video_frames(args.video_path, start_f, end_f, step_f):
         start_time = time.time()
 
         # Scale down for processing speed
@@ -85,8 +83,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Athlete Tracker")
-    parser.add_argument("--base_url", required=True, help="URL with {:05d} placeholder")
-    parser.add_argument("--local_cache_dir", required=True, help="Where to save the downloaded frames")
+    parser.add_argument("--video_path", required=True, help="Path to the input mp4 video file")
     parser.add_argument("--db", required=True, help="Path to face database")
     parser.add_argument("--output_dir", required=True, help="Output folder")
     parser.add_argument("--save_video", action="store_true", help="Compile processed frames into an mp4 video")
