@@ -11,13 +11,13 @@ from src.services.helpers.frame_logger import FrameLogger
 class AthletePositionTracker:
     def __init__(self, db_path: str, threshold: float = 0.35, confidence_threshold: float = 0.5, tracker_config: str = None, debug_mode: bool = False):
         print("Loading FaceRecognizer...")
-        face_recognizer = FaceRecognizer(db_path, threshold=threshold)
+        self.face_recognizer = FaceRecognizer(db_path, threshold=threshold)
         print("Recognizer loaded.")
         
-        person_model = YOLOSegmentationModel(model_path='yolo11n-seg.pt', tracker_config=tracker_config)
+        self.person_model = YOLOSegmentationModel(model_path='yolo11n-seg.pt', tracker_config=tracker_config)
         print("Person segmentation model loaded.")
         
-        self.detector = AthleteDetector(face_recognizer, person_model, confidence_threshold=confidence_threshold, debug_mode=debug_mode)
+        self.detector = AthleteDetector(self.face_recognizer, self.person_model, confidence_threshold=confidence_threshold, debug_mode=debug_mode)
         self.swap_detector = TrackingEventLogger()
         self.frame_logger = FrameLogger()
         self.last_gray_frame: Optional[np.ndarray] = None

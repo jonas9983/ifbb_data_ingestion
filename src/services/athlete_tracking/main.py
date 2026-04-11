@@ -34,13 +34,20 @@ def main(args):
     
     for frame_number, frame_name, img in get_local_images(args.local_cache_dir, start_f, end_f, step_f):
         start_time = time.time()
+
+        # Scale down for processing speed
+        max_height = 1080
+        if img.shape[0] > max_height:
+            scale = max_height / img.shape[0]
+            new_width = int(img.shape[1] * scale)
+            img = cv2.resize(img, (new_width, max_height))
         
         # 1. Track & Detect
         athletes = tracker.process_frame(img, frame_name, frame_number, show_person_bbox=True, filter_front_row=True)
         track_time = time.time() - start_time
         
         found_names = [a.name for a in athletes if a.name not in ["Unknown", "MARSHALL"]]
-        print(f"Frame {frame_number} | Found: {found_names} | Track time: {track_time:.2f}s")
+        print(f"Frame {frame_number} | Bodies Tracked: {len(athletes)} | Recognized: {found_names} | Track time: {track_time:.2f}s")
         
         processed_count += 1
         
@@ -56,15 +63,8 @@ def main(args):
             video_writer.write(img)
             
         vid_time = time.time() - vid_start_time
-        if args.save_video:
+        if args.save_video and args.debug:
              print(f" -> Video write time: {vid_time:.2f}s")
-
-        if args.debug:
-            view_img = cv2.resize(img, (1280, 720)) if img.shape[1] > 1280 else img
-            cv2.imshow("Athlete Tracking", view_img)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                print("Early exit requested by user.")
-                break
 
     # 4. Cleanup and Export
     if video_writer:
@@ -76,9 +76,6 @@ def main(args):
     
     tracker.print_summary()
     tracker.export_comprehensive_data(os.path.join(args.output_dir, "comprehensive_tracking_data.json"))
-    
-    if args.debug:
-        cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Athlete Tracker")
@@ -91,7 +88,7 @@ if __name__ == "__main__":
     parser.add_argument("--confidence", type=float, default=0.5, help="Person detection confidence")
     parser.add_argument("--frame-range", type=str, default="1:100:1", help="Format: 'start:end:step'")
     parser.add_argument("--tracker-config", type=str, default=None, help="YOLO tracker config")
-    parser.add_argument("--debug", action="store_true", help="Enable live preview")
+    parser.add_argument("--debug", action="store_true", help="Enable console debug logs")
 
     args = parser.parse_args()
     main(args)
