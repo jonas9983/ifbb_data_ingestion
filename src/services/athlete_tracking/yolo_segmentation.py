@@ -4,7 +4,7 @@ import supervision as sv
 import os
 
 class YOLOSegmentationModel:
-    def __init__(self, model_path='yolo11l-seg.pt', tracker_config: str = None):
+    def __init__(self, model_path='yolo11n.pt', tracker_config: str = None):
         # Detect device
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         print(f"YOLO loading on device: {self.device}")

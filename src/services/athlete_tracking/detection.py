@@ -155,10 +155,9 @@ class AthleteDetector:
     def detect_and_associate(self, img, check_depth: bool = False) -> List[DetectedAthlete]:
         img_h, img_w = img.shape[:2]
         
-        # 1. TRACK PERSONS (Super Fast YOLO)
+        # 1. TRACK PERSONS
         detections = self.person_detector.track(img, threshold=self.confidence_threshold)
         
-        # 2. IDENTIFY MARSHALL
         best_marshall = self._identify_best_marshall(detections, img, img_h)
         
         detected_athletes = []
@@ -174,7 +173,6 @@ class AthleteDetector:
             if bbox[3] > (img_h * 0.95) and (bbox[3] - bbox[1]) < (img_h * 0.15):
                 continue
                 
-            # --- HANDLE MARSHALL ---
             if best_marshall and best_marshall['index'] == i:
                 if track_id in self.athlete_registry:
                     del self.athlete_registry[track_id] # Clean up
@@ -200,7 +198,6 @@ class AthleteDetector:
             current_registry_name = self.athlete_registry.get(track_id, "Unknown")
 
             if needs_check:
-                # RUN RECOGNITION (Only on cropped body!)
                 new_face_name, new_face_score, face_bbox = self._recognize_face_in_crop(img, bbox.tolist())
                 self.frames_since_check[track_id] = 0
                 

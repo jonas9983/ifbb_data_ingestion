@@ -14,7 +14,7 @@ class AthletePositionTracker:
         face_recognizer = FaceRecognizer(db_path, threshold=threshold)
         print("Recognizer loaded.")
         
-        person_model = YOLOSegmentationModel(model_path='yolo11l-seg.pt', tracker_config=tracker_config)
+        person_model = YOLOSegmentationModel(model_path='yolo11n-seg.pt', tracker_config=tracker_config)
         print("Person segmentation model loaded.")
         
         self.detector = AthleteDetector(face_recognizer, person_model, confidence_threshold=confidence_threshold, debug_mode=debug_mode)

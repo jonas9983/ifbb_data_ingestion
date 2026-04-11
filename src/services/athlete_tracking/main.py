@@ -4,6 +4,7 @@ warnings.filterwarnings("ignore", message=".*rcond.*")
 
 import os
 import cv2
+import time
 import argparse
 from src.services.athlete_tracking.tracker_pipeline import AthletePositionTracker
 from src.services.helpers.video_utils import parse_frame_range, download_frames_parallel, get_local_images
@@ -32,21 +33,31 @@ def main(args):
     processed_count = 0
     
     for frame_number, frame_name, img in get_local_images(args.local_cache_dir, start_f, end_f, step_f):
+        start_time = time.time()
         
-        _ = tracker.process_frame(img, frame_name, frame_number, show_person_bbox=True, filter_front_row=True)
+        # 1. Track & Detect
+        athletes = tracker.process_frame(img, frame_name, frame_number, show_person_bbox=True, filter_front_row=True)
+        track_time = time.time() - start_time
+        
+        found_names = [a.name for a in athletes if a.name not in ["Unknown", "MARSHALL"]]
+        print(f"Frame {frame_number} | Found: {found_names} | Track time: {track_time:.2f}s")
         
         processed_count += 1
-        if processed_count % 50 == 0:
-            print(f" -> Processed {processed_count} frames...")
         
+        # 3. Save Video
+        vid_start_time = time.time()
         if args.save_video:
             if video_writer is None:
                 h, w = img.shape[:2]
                 out_path = os.path.join(args.output_dir, "tracking_output.mp4")
                 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
                 video_writer = cv2.VideoWriter(out_path, fourcc, 30.0, (w, h))
-                print(f" Saving video to {out_path}")
+                print(f" Saving video to {out_path} at {w}x{h} resolution")
             video_writer.write(img)
+            
+        vid_time = time.time() - vid_start_time
+        if args.save_video:
+             print(f" -> Video write time: {vid_time:.2f}s")
 
         if args.debug:
             view_img = cv2.resize(img, (1280, 720)) if img.shape[1] > 1280 else img

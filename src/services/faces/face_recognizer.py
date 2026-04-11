@@ -20,7 +20,7 @@ class FaceDatabaseBuilder:
         self.providers = providers if providers else get_optimal_providers()
         print(f"InsightFace using: {self.providers}")
         
-        self.app = FaceAnalysis(name="buffalo_l", providers=self.providers)
+        self.app = FaceAnalysis(name="buffalo_s", providers=self.providers)
         # ctx_id=0 refers to the first GPU. Use -1 for CPU.
         ctx_id = 0 if 'CUDAExecutionProvider' in self.providers else -1
         self.app.prepare(ctx_id=ctx_id, det_size=(640, 640))
@@ -95,7 +95,7 @@ class FaceRecognizer:
         self.providers = providers if providers else get_optimal_providers()
         ctx_id = 0 if 'CUDAExecutionProvider' in self.providers else -1
         
-        self.app = FaceAnalysis(name="buffalo_l", providers=self.providers)
+        self.app = FaceAnalysis(name="buffalo_s", providers=self.providers)
         self.app.prepare(ctx_id=ctx_id, det_size=(640, 640))
 
     @staticmethod
