@@ -138,7 +138,7 @@ class AthleteDetector:
         # Track Persons
         detections = self.person_detector.track(img, threshold=self.confidence_threshold)
         if self.debug_mode:
-            print(f"--- YOLO found {len(detections)} bodies ---")
+            print(f" YOLO found {len(detections)} bodies ---")
         
         # 2. Marshall Detection
         marshall_candidates = []
@@ -226,7 +226,6 @@ class AthleteDetector:
                     for idx, f in enumerate(faces):
                         if f is matched_face: used_faces_indices.add(idx)
                         
-                    # FIXED MEMORY LOGIC (Removed wrong YOLO threshold)
                     if new_face_name != "Unknown":
                         if current_registry_name == "Unknown":
                             # It's a valid face and memory is empty -> Save it
