@@ -135,19 +135,12 @@ class AthleteDetector:
     def detect_and_associate(self, img, check_depth: bool = False) -> List[DetectedAthlete]:
         img_h, img_w = img.shape[:2]
         
-        # 1. Global Face Detection
-        faces = self.detect_faces(img)
-        if self.debug_mode:
-            print(f"\n--- InsightFace found {len(faces)} faces in this frame ---")
-            for f in faces:
-                print(f"   > Face Match: {f['name']} (Confidence: {f['score']:.4f})")
-
-        # 2. Track Persons (YOLO)
+        # Track Persons
         detections = self.person_detector.track(img, threshold=self.confidence_threshold)
         if self.debug_mode:
             print(f"--- YOLO found {len(detections)} bodies ---")
         
-        # 3. Marshall Detection
+        # 2. Marshall Detection
         marshall_candidates = []
         for i in range(len(detections)):
             bbox = detections.xyxy[i].astype(int)
@@ -170,7 +163,10 @@ class AthleteDetector:
         detected_athletes = []
         used_faces_indices = set()
         
-        # 4. Process Each Person
+        faces = None
+        global_faces_checked = False
+        
+        # 3. Process Each Person
         for i in range(len(detections)):
             bbox = detections.xyxy[i].astype(int)
             mask = detections.mask[i] if detections.mask is not None else None
@@ -205,9 +201,20 @@ class AthleteDetector:
             current_registry_name = self.athlete_registry.get(track_id, "Unknown")
 
             if needs_check:
+                # LAZY LOAD: Only run InsightFace if we actually need it, and only once per frame!
+                if not global_faces_checked:
+                    faces = self.detect_faces(img)
+                    global_faces_checked = True
+                    if self.debug_mode:
+                        print(f"\n--- InsightFace found {len(faces)} faces in this frame ---")
+                        for f in faces:
+                            print(f"   > Face Match: {f['name']} (Confidence: {f['score']:.4f})")
+
+                # 1. Look for a matching face inside this body
                 avail_faces = [f for idx, f in enumerate(faces) if idx not in used_faces_indices]
                 matched_face = self._match_face_to_person(bbox.tolist(), mask, avail_faces)
                 
+                # Reset the timer since we checked
                 self.frames_since_check[track_id] = 0
                 
                 if matched_face:
@@ -215,11 +222,21 @@ class AthleteDetector:
                     new_face_name = matched_face['name']
                     new_face_score = matched_face['score']
                     
+                    # Mark this face as "used"
                     for idx, f in enumerate(faces):
                         if f is matched_face: used_faces_indices.add(idx)
                         
+                    # FIXED MEMORY LOGIC (Removed wrong YOLO threshold)
                     if new_face_name != "Unknown":
-                        if new_face_name == current_registry_name or new_face_score > self.overwrite_threshold:
+                        if current_registry_name == "Unknown":
+                            # It's a valid face and memory is empty -> Save it
+                            self.athlete_registry[track_id] = new_face_name
+                            assigned_name = new_face_name
+                        elif new_face_name == current_registry_name:
+                            # It's the same person, just confirm it
+                            assigned_name = current_registry_name
+                        elif new_face_score > self.overwrite_threshold:
+                            # It's a NEW person with very high confidence -> Overwrite memory
                             self.athlete_registry[track_id] = new_face_name
                             assigned_name = new_face_name
                         else:
