@@ -57,11 +57,12 @@ class AthletePositionTracker:
         swap_info = self.swap_detector.update_state(current_positions, frame_name, frame_number)
         swap_info['positions'] = current_positions
         
+        # CHANGED: Clean, elegant logger call!
         self.frame_logger.log_frame(
-            frame_number=frame_number, frame_name=frame_name, athletes=all_athletes,
-            raw_faces=[], is_camera_cut=is_cut, avg_pixel_diff=avg_diff,
-            registry_state=self.detector.athlete_registry.copy(),
-            marshall_track_id=self.detector.marshall_track_id, swap_info=swap_info, frame_dims=img.shape[:2]
+            frame_number=frame_number, 
+            athletes=all_athletes,
+            is_camera_cut=is_cut, 
+            swap_info=swap_info
         )
         
         self.detector.draw_annotations(img, all_athletes, show_person_bbox)

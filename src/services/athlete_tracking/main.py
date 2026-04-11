@@ -92,7 +92,8 @@ if __name__ == "__main__":
     parser.add_argument("--save_video", action="store_true", help="Compile processed frames into an mp4 video")
     parser.add_argument("--threshold", type=float, default=0.35, help="Face recognition threshold")
     parser.add_argument("--confidence", type=float, default=0.5, help="Person detection confidence")
-    parser.add_argument("--frame-range", type=str, default="1:100:1", help="Format: 'start:end:step'")
+    parser.add_argument("--frame-range", type=str, default=None, help="Format: 'start:end:step'. Leave blank for all.")
+    
     parser.add_argument("--tracker-config", type=str, default=None, help="YOLO tracker config")
     parser.add_argument("--debug", action="store_true", help="Enable console debug logs")
 
