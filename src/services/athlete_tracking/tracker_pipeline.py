@@ -57,7 +57,6 @@ class AthletePositionTracker:
         swap_info = self.swap_detector.update_state(current_positions, frame_name, frame_number)
         swap_info['positions'] = current_positions
         
-        # CHANGED: Clean, elegant logger call!
         self.frame_logger.log_frame(
             frame_number=frame_number, 
             athletes=all_athletes,
