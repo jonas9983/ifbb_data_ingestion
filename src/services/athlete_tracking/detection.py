@@ -54,8 +54,10 @@ class AthleteDetector:
         if not faces_list: return None
         px1, py1, px2, py2 = person_bbox
         
-        best_face = None
-        best_score = -1.0
+        crop = img[cy1:cy2, cx1:cx2]
+        
+        if crop.size == 0:
+            return "Unknown", 0.0, None
 
         for face in faces_list:
             fx1, fy1, fx2, fy2 = face['bbox']
@@ -171,7 +173,6 @@ class AthleteDetector:
                 self.marshall_track_id = top['track_id']
 
         detected_athletes = []
-        used_faces_indices = set()
         
         faces = None
         global_faces_checked = False
