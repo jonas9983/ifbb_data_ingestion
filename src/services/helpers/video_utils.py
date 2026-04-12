@@ -26,7 +26,7 @@ def get_video_frames(video_path: str, start_f: int, end_f: int, step: int = 1):
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     actual_end_f = total_frames if end_f == -1 else min(end_f, total_frames)
     
-    print(f"\n--- Reading Video: {total_frames} total frames available ---")
+    print(f"\n Reading Video: {total_frames} total frames available")
     
     # Fast-forward to the starting frame (OpenCV frames are 0-indexed)
     if start_f > 1:
