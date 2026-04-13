@@ -125,6 +125,13 @@ class AthleteDetector:
                         
                     if new_face_name != "Unknown":
                         if current_registry_name == "Unknown" or new_face_score > self.overwrite_threshold:
+                            
+                            for existing_id, existing_name in list(self.athlete_registry.items()):
+                                if existing_name == new_face_name and existing_id != track_id:
+                                    if self.debug_mode:
+                                        print(f" Reassigning {new_face_name} from ID {existing_id} to ID {track_id}")
+                                    del self.athlete_registry[existing_id]
+«                            
                             self.athlete_registry[track_id] = new_face_name
                             assigned_name = new_face_name
                         else:
@@ -136,6 +143,10 @@ class AthleteDetector:
             else:
                 self.frames_since_check[track_id] += 1
                 assigned_name = current_registry_name
+
+            if assigned_name != "Unknown":
+                if any(a.name == assigned_name for a in detected_athletes):
+                    assigned_name = "Unknown" # Force the weaker clone to be Unknown
 
             detected_athletes.append(DetectedAthlete(
                 name=assigned_name, track_id=track_id, person_bbox=bbox.tolist(),
