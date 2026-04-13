@@ -10,6 +10,11 @@ from src.services.athlete_tracking.tracker_pipeline import AthletePositionTracke
 from src.services.helpers.video_utils import parse_frame_range, get_video_frames
 
 def main(args):
+    if not os.path.exists(args.video_path):
+        print(f"\n ERROR: Video file not found at {args.video_path}")
+        print("Please check your file path and try again.\n")
+        return
+
     start_f, end_f, step_f = parse_frame_range(args.frame_range)
 
     # 2. Initialize Pipeline
@@ -45,12 +50,12 @@ def main(args):
         track_time = time.time() - start_time
         
         # 2. Print clean console output
-        found_names = [a.name for a in athletes if a.name not in ["Unknown", "MARSHALL"]]
-        
-        if len(athletes) == 0:
-            print(f"Frame {frame_number} | No stage detected. Skipped. | Track time: {track_time:.2f}s")
-        else:
-            print(f"Frame {frame_number} | Bodies Tracked: {len(athletes)} | Recognized: {found_names} | Track time: {track_time:.2f}s")
+        if args.debug or processed_count % 30 == 0:
+            found_names = [a.name for a in athletes if a.name != "Unknown"]
+            if len(athletes) == 0:
+                print(f"Frame {frame_number} | No stage detected. Skipped. | Track time: {track_time:.2f}s")
+            else:
+                print(f"Frame {frame_number} | Bodies Tracked: {len(athletes)} | Recognized: {found_names} | Track time: {track_time:.2f}s")
         
         processed_count += 1
         
@@ -77,8 +82,11 @@ def main(args):
     print(f" Average Speed: {fps:.2f} FPS")
     print("="*60)
     
-    tracker.print_summary()
-    tracker.export_comprehensive_data(os.path.join(args.output_dir, "comprehensive_tracking_data.json"))
+    if processed_count > 0:
+        tracker.print_summary()
+        tracker.export_comprehensive_data(os.path.join(args.output_dir, "comprehensive_tracking_data.json"))
+    else:
+        print("\n No frames were successfully processed. Skipping JSON export.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Athlete Tracker")
