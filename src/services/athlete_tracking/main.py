@@ -6,18 +6,53 @@ import os
 import cv2
 import time
 import argparse
+import threading
+from queue import Queue
 from src.services.athlete_tracking.tracker_pipeline import AthletePositionTracker
 from src.services.helpers.video_utils import parse_frame_range, get_video_frames
+
+# --- THREAD WORKER: READS VIDEO ---
+def video_reader_worker(video_path, start_f, end_f, step_f, input_queue):
+    for frame_number, frame_name, img in get_video_frames(video_path, start_f, end_f, step_f):
+        # max_height resizing done here so the GPU thread doesn't have to waste time doing it
+        max_height = 720
+        if img.shape[0] > max_height:
+            scale = max_height / img.shape[0]
+            new_width = int(img.shape[1] * scale)
+            img = cv2.resize(img, (new_width, max_height))
+            
+        input_queue.put((frame_number, frame_name, img))
+    
+    input_queue.put(None)
+
+# --- THREAD WORKER: WRITES VIDEO ---
+def video_writer_worker(output_path, output_queue):
+    writer = None
+    while True:
+        data = output_queue.get()
+        if data is None:
+            break
+            
+        img = data
+        if writer is None:
+            h, w = img.shape[:2]
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            writer = cv2.VideoWriter(output_path, fourcc, 30.0, (w, h))
+            print(f" Saving video to {output_path} at {w}x{h} resolution")
+            
+        writer.write(img)
+        
+    if writer:
+        writer.release()
+
 
 def main(args):
     if not os.path.exists(args.video_path):
         print(f"\n ERROR: Video file not found at {args.video_path}")
-        print("Please check your file path and try again.\n")
         return
 
     start_f, end_f, step_f = parse_frame_range(args.frame_range)
 
-    # 2. Initialize Pipeline
     print("\n--- INITIALIZING MODELS ---")
     tracker = AthletePositionTracker(
         db_path=args.db,
@@ -28,24 +63,35 @@ def main(args):
     )
 
     os.makedirs(args.output_dir, exist_ok=True)
-    video_writer = None
+    out_path = os.path.join(args.output_dir, "tracking_output.mp4")
     
-    # 3. Main Processing Loop
-    print(f"\n--- STARTING PROCESSING ---")
+    # --- QUEUE SETUP ---
+    input_queue = Queue(maxsize=120) 
+    output_queue = Queue(maxsize=120)
+
+    # --- START THREADS ---
+    reader_thread = threading.Thread(target=video_reader_worker, args=(args.video_path, start_f, end_f, step_f, input_queue))
+    reader_thread.start()
+
+    writer_thread = None
+    if args.save_video:
+        writer_thread = threading.Thread(target=video_writer_worker, args=(out_path, output_queue))
+        writer_thread.start()
+
+    print(f"\n--- STARTING PROCESSING (THREADED) ---")
     processed_count = 0
     pipeline_start_time = time.time()
     
-    for frame_number, frame_name, img in get_video_frames(args.video_path, start_f, end_f, step_f):
+    # --- MAIN GPU LOOP ---
+    while True:
+        data = input_queue.get()
+        if data is None: # Video is completely read
+            break
+            
+        frame_number, frame_name, img = data
         start_time = time.time()
-
-        # Scale down for processing speed
-        max_height = 720
-        if img.shape[0] > max_height:
-            scale = max_height / img.shape[0]
-            new_width = int(img.shape[1] * scale)
-            img = cv2.resize(img, (new_width, max_height))
         
-        # 1. Track & Detect
+        # 1. Track & Detect (GPU Heavy)
         athletes = tracker.process_frame(img, frame_name, frame_number, show_person_bbox=True, filter_front_row=False)
         track_time = time.time() - start_time
         
@@ -53,25 +99,22 @@ def main(args):
         if args.debug or processed_count % 30 == 0:
             found_names = [a.name for a in athletes if a.name != "Unknown"]
             if len(athletes) == 0:
-                print(f"Frame {frame_number} | No stage detected. Skipped. | Track time: {track_time:.2f}s")
+                print(f"Frame {frame_number} | No stage detected. | Track: {track_time:.2f}s | Queue: {input_queue.qsize()}")
             else:
-                print(f"Frame {frame_number} | Bodies Tracked: {len(athletes)} | Recognized: {found_names} | Track time: {track_time:.2f}s")
+                print(f"Frame {frame_number} | Tracked: {len(athletes)} | Recog: {found_names} | Track: {track_time:.2f}s")
         
         processed_count += 1
         
-        # 3. Save Video
+        # 3. Send to background writer
         if args.save_video:
-            if video_writer is None:
-                h, w = img.shape[:2]
-                out_path = os.path.join(args.output_dir, "tracking_output.mp4")
-                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                video_writer = cv2.VideoWriter(out_path, fourcc, 30.0, (w, h))
-                print(f" Saving video to {out_path} at {w}x{h} resolution")
-            video_writer.write(img)
+            output_queue.put(img)
 
-    # 4. Cleanup and Export
-    if video_writer:
-        video_writer.release()
+    # --- CLEANUP ---
+    if args.save_video:
+        output_queue.put(None)
+        writer_thread.join()
+        
+    reader_thread.join()
         
     total_time = time.time() - pipeline_start_time
     fps = processed_count / total_time if total_time > 0 else 0
@@ -85,8 +128,6 @@ def main(args):
     if processed_count > 0:
         tracker.print_summary()
         tracker.export_comprehensive_data(os.path.join(args.output_dir, "comprehensive_tracking_data.json"))
-    else:
-        print("\n No frames were successfully processed. Skipping JSON export.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Athlete Tracker")
@@ -97,7 +138,6 @@ if __name__ == "__main__":
     parser.add_argument("--threshold", type=float, default=0.35, help="Face recognition threshold")
     parser.add_argument("--confidence", type=float, default=0.5, help="Person detection confidence")
     parser.add_argument("--frame-range", type=str, default=None, help="Format: 'start:end:step'. Leave blank for all.")
-    
     parser.add_argument("--tracker-config", type=str, default=None, help="YOLO tracker config")
     parser.add_argument("--debug", action="store_true", help="Enable console debug logs")
 
