@@ -19,55 +19,77 @@ class EventRecord:
 
 class TrackingEventLogger:
     def __init__(self):
-        self.last_frame_positions: Dict[str, float] = {}
         self.all_athletes_seen: Set[str] = set()
         self.events: List[EventRecord] = []
         
         self.frames_processed = 0
         self.frames_with_detection = 0
         
-        self.last_swap_frame = -1
-        self.swap_cooldown = 10 
-        
         self.pixel_buffer = 40.0 
+        self.swap_cooldown = 30
+        
+        # New Pairwise Tracking State
+        self.confirmed_order: Dict[Tuple[str, str], int] = {} 
+        self.pending_swaps: Dict[Tuple[str, str], Dict] = {}
 
     def reset_state(self, frame_number: int, frame_name: str, trigger: str = "camera_cut"):
         self._record_event(frame_number, frame_name, [], trigger)
-        self.last_frame_positions.clear()
-        self.last_swap_frame = -1
+        # Clear out state on camera cuts so we don't accidentally bridge cuts
+        self.confirmed_order.clear()
+        self.pending_swaps.clear()
 
     def detect_swaps(self, current_positions: Dict[str, float], frame_name: str, frame_number: int) -> List[Tuple[str, str]]:
-        swaps = []
-        common_athletes = sorted(list(set(self.last_frame_positions.keys()) & set(current_positions.keys())))
-        
-        if len(common_athletes) < 2:
-            return swaps
+        confirmed_swaps = []
+        common_athletes = sorted(list(current_positions.keys()))
 
+        # Check every pair of athletes currently on stage
         for i in range(len(common_athletes)):
             for j in range(i + 1, len(common_athletes)):
                 a, b = common_athletes[i], common_athletes[j]
                 
-                prev_diff = self.last_frame_positions[a] - self.last_frame_positions[b]
-                curr_diff = current_positions[a] - current_positions[b]
+                # Always order the pair alphabetically so the dictionary key is consistent
+                pair = tuple(sorted([a, b]))
+                p1, p2 = pair
                 
-                # Check for crossing with a buffer to prevent jitter spam
-                swapped = False
-                if prev_diff < -self.pixel_buffer and curr_diff > self.pixel_buffer:
-                    swapped = True
-                elif prev_diff > self.pixel_buffer and curr_diff < -self.pixel_buffer:
-                    swapped = True
-
-                if swapped:
-                    swaps.append((a, b))
+                curr_diff = current_positions[p1] - current_positions[p2]
+                
+                # 1 if p1 is right of p2, -1 if left. 0 if dead center (ignore)
+                if curr_diff > self.pixel_buffer:
+                    current_state = 1
+                elif curr_diff < -self.pixel_buffer:
+                    current_state = -1
+                else:
+                    current_state = 0 
+                
+                if current_state == 0:
+                    continue
                     
-                    if frame_number - self.last_swap_frame > self.swap_cooldown:
+                # First time seeing this pair? Log their order and move on
+                if pair not in self.confirmed_order:
+                    self.confirmed_order[pair] = current_state
+                    self.pending_swaps[pair] = {'state': current_state, 'frames': 0}
+                    continue
+                
+                if current_state != self.confirmed_order[pair]:
+                    if pair in self.pending_swaps and self.pending_swaps[pair]['state'] == current_state:
+                        self.pending_swaps[pair]['frames'] += 1
+                    else:
+                        # Start tracking a new pending swap
+                        self.pending_swaps[pair] = {'state': current_state, 'frames': 1}
+                        
+                    if self.pending_swaps[pair]['frames'] >= self.swap_cooldown:
+                        self.confirmed_order[pair] = current_state
+                        confirmed_swaps.append((p1, p2))
+                        self.pending_swaps[pair] = {'state': current_state, 'frames': 0}
+                        
                         print("=" * 50)
-                        print(f"🔄 SWAP CONFIRMED: {frame_name}")
-                        print(f"   {a} <-> {b}")
+                        print(f" SWAP CONFIRMED: Frame {frame_number}")
+                        print(f"   {p1} <-> {p2}")
                         print("=" * 50)
-                        self.last_swap_frame = frame_number
+                else:
+                    self.pending_swaps[pair] = {'state': self.confirmed_order[pair], 'frames': 0}
 
-        return swaps
+        return confirmed_swaps
 
     def _get_ordered_athletes(self, positions: Dict[str, float]) -> List[str]:
         return [name for name, _ in sorted(positions.items(), key=lambda x: x[1])]
@@ -87,19 +109,13 @@ class TrackingEventLogger:
         for athlete in current_positions.keys():
             if athlete not in self.all_athletes_seen:
                 self.all_athletes_seen.add(athlete)
-                print(f" [New Athlete]: {athlete}")
+                print(f"  [New Athlete]: {athlete}")
 
         ordered_athletes = self._get_ordered_athletes(current_positions)
         swaps = self.detect_swaps(current_positions, frame_name, frame_number)
 
         if swaps:
             self._record_event(frame_number, frame_name, ordered_athletes, "position_changed", swaps)
-            self.last_frame_positions = current_positions
-        elif current_positions:
-            prev_lineup = self._get_ordered_athletes(self.last_frame_positions)
-            if ordered_athletes != prev_lineup and len(ordered_athletes) >= len(prev_lineup):
-                self._record_event(frame_number, frame_name, ordered_athletes, "lineup_changed")
-            self.last_frame_positions = current_positions
 
         return {'swaps': swaps, 'ordered_athletes': ordered_athletes}
 

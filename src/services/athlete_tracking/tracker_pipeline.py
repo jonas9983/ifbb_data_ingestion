@@ -5,7 +5,7 @@ from typing import Tuple, Optional
 from src.services.faces.face_recognizer import FaceRecognizer
 from src.services.athlete_tracking.detection import AthleteDetector
 from src.services.athlete_tracking.swap_detection import TrackingEventLogger
-from src.services.athlete_tracking.yolo_segmentation import YOLOSegmentationModel
+from src.services.athlete_tracking.yolo_segmentation import YOLOModel
 from src.services.helpers.frame_logger import FrameLogger
 
 class AthletePositionTracker:
@@ -14,7 +14,7 @@ class AthletePositionTracker:
         self.face_recognizer = FaceRecognizer(db_path, threshold=threshold)
         print("Recognizer loaded.")
         
-        self.person_model = YOLOSegmentationModel(model_path='yolo11n-seg.pt', tracker_config=tracker_config)
+        self.person_model = YOLOModel(model_path='yolo11n.pt', tracker_config=tracker_config)
         print("Person segmentation model loaded.")
         
         self.detector = AthleteDetector(self.face_recognizer, self.person_model, confidence_threshold=confidence_threshold, debug_mode=debug_mode)

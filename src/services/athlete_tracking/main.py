@@ -30,12 +30,11 @@ def main(args):
     processed_count = 0
     pipeline_start_time = time.time()
     
-    # CHANGED: Now iterating directly over the video file!
     for frame_number, frame_name, img in get_video_frames(args.video_path, start_f, end_f, step_f):
         start_time = time.time()
 
         # Scale down for processing speed
-        max_height = 1080
+        max_height = 720
         if img.shape[0] > max_height:
             scale = max_height / img.shape[0]
             new_width = int(img.shape[1] * scale)
