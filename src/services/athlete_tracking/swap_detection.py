@@ -103,17 +103,31 @@ class TrackingEventLogger:
 
     def update_state(self, current_positions: Dict[str, float], frame_name: str, frame_number: int) -> Dict:
         self.frames_processed += 1
+        
+        # 1. Update our memory with anyone currently visible
+        for athlete, pos in current_positions.items():
+            self.last_known_positions[athlete] = pos
+            
+        # 2. If they are missing, force them back into the lineup
+        for athlete in list(self.last_known_positions.keys()):
+            if athlete not in current_positions:
+                current_positions[athlete] = self.last_known_positions[athlete]
+
+        # 3. Track detection stats
         if current_positions:
             self.frames_with_detection += 1
             
+        # 4. Log newly seen athletes
         for athlete in current_positions.keys():
             if athlete not in self.all_athletes_seen:
                 self.all_athletes_seen.add(athlete)
                 print(f"  [New Athlete]: {athlete}")
 
+        # 5. Calculate the order and detect any crossovers!
         ordered_athletes = self._get_ordered_athletes(current_positions)
         swaps = self.detect_swaps(current_positions, frame_name, frame_number)
 
+        # 6. Log the event if a swap happened
         if swaps:
             self._record_event(frame_number, frame_name, ordered_athletes, "position_changed", swaps)
 
