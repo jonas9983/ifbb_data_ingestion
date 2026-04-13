@@ -131,7 +131,7 @@ class AthleteDetector:
                                     if self.debug_mode:
                                         print(f" Reassigning {new_face_name} from ID {existing_id} to ID {track_id}")
                                     del self.athlete_registry[existing_id]
-«                            
+                            
                             self.athlete_registry[track_id] = new_face_name
                             assigned_name = new_face_name
                         else:
