@@ -16,22 +16,21 @@ class FrameLogger:
         is_camera_cut: bool,
         swap_info: Dict
     ):
-        # 1. Find the Marshall to track his position
-        marshall = next((a for a in athletes if a.name == "MARSHALL"), None)
-        
-        # 2. Format swaps
+        # 1. Format swaps
         swaps = swap_info.get('swaps', [])
         formatted_swaps = [f"{s[0]} <-> {s[1]}" for s in swaps]
 
-        # 3. Build the clean JSON payload
+        # 2. Build the clean JSON payload
         frame_data = {
             'frame': int(frame_number),
             'is_camera_cut': bool(is_camera_cut),
             'lineup': [str(name) for name in swap_info.get('ordered_athletes', [])],
+            
             'marshall': {
-                'detected': bool(marshall is not None),
-                'center_x': float(marshall.center_x) if marshall else None
+                'detected': False,
+                'center_x': None
             },
+            
             'swaps_detected': formatted_swaps
         }
         
@@ -41,6 +40,9 @@ class FrameLogger:
         """
         Export all logged frames to a lightweight JSON file.
         """
+        # Ensure the directory exists before saving
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(self.frame_logs, f, indent=2, ensure_ascii=False)
         

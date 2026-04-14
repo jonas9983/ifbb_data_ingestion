@@ -1,16 +1,16 @@
+# Optimized BotSORT for IFBB Stage Tracking
 tracker_type: botsort
-track_high_thresh: 0.6
+track_high_thresh: 0.4    # Lowered so it doesn't drop tracks as easily when partially blocked
 track_low_thresh: 0.1
-new_track_thresh: 0.7
-match_thresh: 0.7
+new_track_thresh: 0.5     # Lowered so it picks athletes back up instantly after the Marshall passes
+match_thresh: 0.8         # Increased to allow more leniency in bounding box IoU matching
 
 gmc_method: sparseOptFlow
 replay_with_len: 10
 
-with_reid: True
-proximity_thresh: 0.6
-appearance_thresh: 0.5
+with_reid: False          
+proximity_thresh: 0.5
+appearance_thresh: 0.25
 
-track_buffer: 90
-model: auto
+track_buffer: 150
 fuse_score: True
