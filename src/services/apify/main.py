@@ -11,7 +11,6 @@ from typing import Dict, Any
 from insightface.app import FaceAnalysis
 
 from src.etl.extraction.apify_extraction import InstagramScraper, BillingGuard, APIFY_API_TOKEN
-from src.services.faces.face_recognizer import FaceDatabaseBuilder
 
 class SingleFaceFilter:
     """Filters images to find the highest quality single-face shots."""
@@ -175,40 +174,8 @@ class DatabaseWorkflow:
         
         print(f"Building database from {len(subdirs)} athletes...")
         
-        # Build database with image references
-        database = self._build_database()
         
-        print(f"✓ Database saved: {self.db_save_path}")
-        print(f"  Athletes in database: {len(database)}")
         return True
-    
-    def _build_database(self):
-        """Build face database and track which images were used."""
-        builder = FaceDatabaseBuilder()
-        database = builder.build(self.database_dir, self.db_save_path, save_references=True)
-        return database
-    
-    def run_full_workflow(self, skip_scrape=False, skip_filter=False, 
-                          skip_validation=False, skip_build=False):
-        """Run the complete workflow with optional step skipping."""
-        
-        if not skip_scrape:
-            if not self.step1_scrape_instagram():
-                print("Scraping failed or skipped")
-                return
-        
-        if not skip_filter:
-            self.step2_filter_single_faces()
-        
-        if not skip_validation:
-            self.step3_manual_validation()
-        
-        if not skip_build:
-            self.step4_build_database()
-        
-        print("\n" + "="*60)
-        print("WORKFLOW COMPLETE")
-        print("="*60)
 
 
 if __name__ == "__main__":
