@@ -8,20 +8,19 @@ from pathlib import Path
 from typing import List, Dict, Any
 
 # --- CONFIGURATION ---
-# Centralized selectors to easily adapt to HTML changes.
 CONFIG = {
     "BASE_URL": "https://contests.npcnewsonline.com/contests/",
     "USER_AGENT": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
     "SELECTORS": {
-        "CONTEST_LINKS": ".contest-list a, .contest-item a",        # Links to individual contests
-        "DIVISION_LINKS": ".division-list a, .divisions-list a",     # Links to divisions (e.g., Bikini, Physique)
-        "ATHLETE_CONTAINER": ".athlete-container, .athlete-item",    # Wrapper for each athlete entry
-        "ATHLETE_NAME": ".athlete-name, .name",                      # Element containing athlete's name
-        "ATHLETE_IMAGE": "img",                                      # Image element for the athlete
+        "CONTEST_LINKS": ".contest-listing a",                      # Links to individual contests from the year page
+        "DIVISION_LINKS": ".contest-divisions a",                   # Links to divisions within a contest page
+        "ATHLETE_CONTAINER": ".competitor-card",                    # Container for each athlete entry
+        "ATHLETE_NAME": ".competitor-name",                         # Element containing athlete's name
+        "ATHLETE_IMAGE": ".competitor-image img",                  # Image element for the athlete
     },
     "STORAGE_BASE": "data/images",
     "METADATA_FILE": "data/images/metadata.json",
-    "REQUEST_DELAY": 1.5, # Seconds to sleep between page requests
+    "REQUEST_DELAY": 1.5,
 }
 
 class NPCNewsScraper:
