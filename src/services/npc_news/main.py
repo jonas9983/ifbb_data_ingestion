@@ -16,7 +16,7 @@ from src.etl.loading.db_loading import DatabaseManager
 CONFIG = {
     "BASE_URL": "https://contests.npcnewsonline.com/contests/",
     "STORAGE_BASE": "data/npc_news",
-    "GDRIVE_REMOTE": "gdrive:Bodybuilding_Dataset",
+    "GDRIVE_REMOTE": "gdrive:personal/1Bodybuilding_Dataset",
     "DISK_LIMIT_GB": 20,
     "MAX_WORKERS": 5
 }
@@ -106,6 +106,24 @@ class NPCNewsScraper:
                 unique_targets = []
                 seen = set()
                 for data in contest_data:
+                    href = data["href"].lower()
+                    name_lower = data["name"].lower()
+                    
+                    # Extract the part of the URL after the year to avoid matching the domain (npcnewsonline.com)
+                    path_part = href.split(f"/{year}/")[-1] if f"/{year}/" in href else href
+                    
+                    # Filter out non-IFBB organizations (NPC, NPC Worldwide, CPA)
+                    # We check for these patterns in the URL path and the contest name
+                    exclude_patterns = ["npc", "npcw", "cpa", "npc_worldwide"]
+                    
+                    # If any exclude pattern is in the path part OR 
+                    # if the name contains npc/cpa and NOT ifbb, we skip it.
+                    is_non_ifbb = any(p in path_part for p in exclude_patterns) or \
+                                  (( "npc" in name_lower or "cpa" in name_lower ) and "ifbb" not in name_lower)
+
+                    if is_non_ifbb:
+                        continue
+
                     if data["name"] and f"/{year}/" in data["href"] and data["href"] not in seen:
                         seen.add(data["href"])
                         unique_targets.append(data)
