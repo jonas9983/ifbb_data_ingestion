@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List
 from playwright.sync_api import sync_playwright
 
-from src.etl.loading.drive_loading import upload_to_drive
+from drive_loading import upload_to_drive
 
 # --- CONFIGURATION ---
 CONFIG = {
