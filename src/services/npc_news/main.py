@@ -1,10 +1,10 @@
 import os
 import json
-import time
 import argparse
 import requests
+import subprocess
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List
 from playwright.sync_api import sync_playwright
 
 # --- CONFIGURATION ---
@@ -12,6 +12,7 @@ CONFIG = {
     "BASE_URL": "https://contests.npcnewsonline.com/contests/",
     "STORAGE_BASE": "data/images",
     "METADATA_FILE": "data/images/metadata.json",
+    "GDRIVE_REMOTE": "gdrive:Bodybuilding_Dataset" # Change if you named your rclone config differently
 }
 
 class NPCNewsScraper:
@@ -31,9 +32,9 @@ class NPCNewsScraper:
         """Downloads image and ONLY creates directories if the download is successful."""
         if path.exists(): return True
         try:
-            res = self.img_session.get(url, timeout=10)
+            res = self.img_session.get(url, timeout=15)
             if res.status_code == 200:
-                # LAZY CREATION: Only make the folder if we actually have an image to save
+                # LAZY CREATION: Make the folder only if we have an image
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with open(path, "wb") as f:
                     f.write(res.content)
@@ -60,6 +61,7 @@ class NPCNewsScraper:
                 year_url = f"{CONFIG['BASE_URL']}{year}/"
                 page.goto(year_url, wait_until="networkidle")
                 
+                # 1. Batch extract contest links
                 contest_data = page.locator("a[href*='/contests/20']").evaluate_all("""
                     elements => elements.map(el => ({
                         href: el.getAttribute('href') || '',
@@ -92,13 +94,15 @@ class NPCNewsScraper:
                     link_to_click = page.locator(f"a[href='{contest['href']}']").first
                     
                     try:
-                        link_to_click.click()
-                        page.wait_for_load_state("networkidle")
+                        with page.expect_navigation(wait_until="networkidle", timeout=15000):
+                            link_to_click.click()
                         page.wait_for_timeout(2000)
                     except Exception as e:
-                        print(f"    Click failed for {c_name}. Retrying with goto...")
-                        page.goto(contest["href"], wait_until="networkidle")
+                        print(f"    Click navigation failed for {c_name}. Using direct goto...")
+                        page.goto(contest["href"], wait_until="networkidle", timeout=15000)
+                        page.wait_for_timeout(2000)
 
+                    # 2. Batch extract athlete sub-paths
                     c_path = page.url.replace("https://contests.npcnewsonline.com", "").rstrip("/")
                     links_data = page.locator("a").evaluate_all("""
                         elements => elements.map(el => ({
@@ -122,7 +126,7 @@ class NPCNewsScraper:
                         print(f"    Error: No athletes discovered for {c_name}.")
                         continue
 
-                    print(f"    Found {len(ath_galleries)} links to process...")
+                    print(f"    Found {len(ath_galleries)} athletes to process...")
 
                     for ath in ath_galleries:
                         ath_name = ath["name"]
@@ -132,30 +136,52 @@ class NPCNewsScraper:
                         
                         target_dir = Path(CONFIG["STORAGE_BASE"]) / year_str / self._sanitize(c_name) / "General" / self._sanitize(ath_name)
                         
-                        # Navigate to athlete gallery
                         page.goto(ath_url, wait_until="networkidle")
                         page.wait_for_timeout(1000)
                         
-                        img_sources = page.locator("img").evaluate_all("""
-                            elements => elements.map(el => el.getAttribute('src') || el.getAttribute('data-src') || '')
+                        # 3. Get High-Res Viewer Links
+                        viewer_links = page.locator("a[href*='images.php']").evaluate_all("""
+                            elements => elements.map(el => el.getAttribute('href'))
                         """)
                         
+                        unique_viewers = []
+                        for href in viewer_links:
+                            if href:
+                                full_url = href if href.startswith("http") else f"https://contests.npcnewsonline.com/{href.lstrip('/')}"
+                                if full_url not in unique_viewers:
+                                    unique_viewers.append(full_url)
+
                         successful_images = 0
-                        for idx, src in enumerate(img_sources):
-                            if src and ("/images/contests/" in src or "thumb" in src):
-                                if not src.startswith("http"): src = f"https://contests.npcnewsonline.com{src}"
+                        for idx, viewer_url in enumerate(unique_viewers):
+                            try:
+                                page.goto(viewer_url, wait_until="domcontentloaded", timeout=10000)
                                 
-                                # 1. Attempt to guess the high-res URL by removing 'thumb_' or '-th'
-                                high_res_url = src.replace("thumb_", "").replace("_thumb", "").replace("-th.", ".")
-                                filename = f"image_{idx+1}.jpg"
+                                high_res_src = page.locator("img").evaluate_all("""
+                                    elements => {
+                                        for(let img of elements) {
+                                            let src = img.getAttribute('src') || '';
+                                            if(src.includes('/images/contests/') && !src.includes('thumb')) {
+                                                return src;
+                                            }
+                                        }
+                                        return null;
+                                    }
+                                """)
                                 
-                                # 2. Try high-res first. If it fails, fallback to the thumbnail.
-                                if self.download_image(high_res_url, target_dir / filename) or self.download_image(src, target_dir / filename):
-                                    self.metadata[year_str][c_name].setdefault("General", {}).setdefault(ath_name, []).append(filename)
-                                    successful_images += 1
+                                if high_res_src:
+                                    if not high_res_src.startswith("http"): 
+                                        high_res_src = f"https://contests.npcnewsonline.com{high_res_src}"
+                                    
+                                    filename = f"image_{idx+1}.jpg"
+                                    
+                                    if self.download_image(high_res_src, target_dir / filename):
+                                        self.metadata[year_str][c_name].setdefault("General", {}).setdefault(ath_name, []).append(filename)
+                                        successful_images += 1
+                            except Exception as e:
+                                pass # Skip if viewer page fails to load
                         
                         if successful_images > 0:
-                            print(f"      Athlete: {ath_name} -> Done: {successful_images} images")
+                            print(f"      Athlete: {ath_name} -> Done: {successful_images} High-Res images")
 
                 self._save_metadata()
             browser.close()
@@ -164,9 +190,33 @@ class NPCNewsScraper:
         with open(CONFIG["METADATA_FILE"], "w") as f:
             json.dump(self.metadata, f, indent=4)
 
+def upload_to_drive():
+    """Triggers Rclone to sync the local images directory to Google Drive"""
+    print("\n==================================================")
+    print("🚀 Starting upload to Google Drive via Rclone...")
+    print("==================================================")
+    try:
+        # Calls: rclone copy data/images gdrive:Bodybuilding_Dataset --progress
+        subprocess.run([
+            "rclone", "copy", CONFIG["STORAGE_BASE"], 
+            CONFIG["GDRIVE_REMOTE"], "--progress"
+        ], check=True)
+        print("\n✅ Upload successfully completed!")
+    except subprocess.CalledProcessError as e:
+        print(f"\n❌ Upload failed. Make sure Rclone is configured properly. Error: {e}")
+    except FileNotFoundError:
+        print("\n❌ Rclone not found! Ensure it is installed on your system.")
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--year", type=int)
+    parser.add_argument("--year", type=int, help="Specific year to scrape (e.g., 2011)")
+    parser.add_argument("--upload", action="store_true", help="Upload the dataset to Google Drive when finished")
     args = parser.parse_args()
+    
+    # Run the scraper
     scraper = NPCNewsScraper([args.year] if args.year else list(range(2011, 2027)))
     scraper.run()
+    
+    # Run the upload if the flag was passed
+    if args.upload:
+        upload_to_drive()
