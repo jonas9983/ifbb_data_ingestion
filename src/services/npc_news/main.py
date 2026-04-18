@@ -16,7 +16,7 @@ from src.etl.loading.db_loading import DatabaseManager
 CONFIG = {
     "BASE_URL": "https://contests.npcnewsonline.com/contests/",
     "STORAGE_BASE": "data/npc_news",
-    "GDRIVE_REMOTE": "gdrive:personal/1Bodybuilding_Dataset",
+    "GDRIVE_REMOTE": "gdrive:personal/Bodybuilding_Dataset",
     "DISK_LIMIT_GB": 20,
     "MAX_WORKERS": 5
 }
@@ -50,9 +50,18 @@ class NPCNewsScraper:
         return total_size / (1024**3)
 
     def _upload_and_cleanup(self):
-        """Uploads STORAGE_BASE to Drive and clears local files."""
-        print(f"\n[Maintenance] Triggering upload and cleanup...")
+        """Uploads STORAGE_BASE and backs up Database to Drive."""
+        print(f"\n[Maintenance] Triggering upload and backup...")
+        
+        # 1. Upload/Move the images
         upload_to_drive(CONFIG["STORAGE_BASE"], CONFIG["GDRIVE_REMOTE"], delete_after=True)
+        
+        # 2. Backup the database (Copy)
+        db_file = Path("data/npc_data.db")
+        if db_file.exists():
+            print(f"Backing up database {db_file.name} to Drive...")
+            upload_to_drive(str(db_file), CONFIG["GDRIVE_REMOTE"])
+
         # Ensure STORAGE_BASE exists for next batches
         Path(CONFIG["STORAGE_BASE"]).mkdir(parents=True, exist_ok=True)
 
@@ -113,11 +122,8 @@ class NPCNewsScraper:
                     path_part = href.split(f"/{year}/")[-1] if f"/{year}/" in href else href
                     
                     # Filter out non-IFBB organizations (NPC, NPC Worldwide, CPA)
-                    # We check for these patterns in the URL path and the contest name
                     exclude_patterns = ["npc", "npcw", "cpa", "npc_worldwide"]
                     
-                    # If any exclude pattern is in the path part OR 
-                    # if the name contains npc/cpa and NOT ifbb, we skip it.
                     is_non_ifbb = any(p in path_part for p in exclude_patterns) or \
                                   (( "npc" in name_lower or "cpa" in name_lower ) and "ifbb" not in name_lower)
 
@@ -133,6 +139,10 @@ class NPCNewsScraper:
                 for contest in unique_targets:
                     c_name = contest["name"]
                     print(f"  Contest: {c_name}")
+
+                    # --- PRE-FETCH PROCESSED ATHLETES ---
+                    # Optimization: Get all processed athletes for this contest in one go
+                    processed_set = self.db.get_processed_athletes_for_contest(year, c_name)
 
                     page.goto(year_url, wait_until="domcontentloaded", timeout=60000)
                     link_to_click = page.locator(f"a[href='{contest['href']}']").first
@@ -180,9 +190,11 @@ class NPCNewsScraper:
                         placing, ath_name = self._parse_athlete_name(ath["raw_text"])
                         division = ath["division"]
                         
-                        # --- IDEMPOTENCY CHECK ---
-                        if self.db.is_athlete_processed(year, c_name, division, ath_name):
-                            print(f"      [{idx_ath+1}/{len(ath_galleries)}] Skipping {ath_name} (Already in DB)")
+                        # --- IDEMPOTENCY CHECK (In Memory) ---
+                        if (division, ath_name) in processed_set:
+                            # Log every 100 skipped to show progress without flooding
+                            if (idx_ath + 1) % 100 == 0 or idx_ath == 0 or (idx_ath + 1) == len(ath_galleries):
+                                print(f"      [{idx_ath+1}/{len(ath_galleries)}] Skipping {ath_name} (Already in DB)")
                             continue
 
                         print(f"      [{idx_ath+1}/{len(ath_galleries)}] Processing Athlete: {ath_name}...")
@@ -190,20 +202,15 @@ class NPCNewsScraper:
                         if not ath_url.startswith("http"):
                             ath_url = f"https://contests.npcnewsonline.com{ath_url}"
                         
-                        # Set target directory (Flat year folder)
                         target_dir = Path(CONFIG["STORAGE_BASE"]) / year_str
-                        
-                        # Go to athlete gallery
                         page.goto(ath_url, wait_until="domcontentloaded", timeout=60000)
                         
-                        # Get all high-res viewer links
                         viewer_links = page.locator("a[href*='images.php']").evaluate_all("""
                             elements => elements.map(el => el.getAttribute('href'))
                         """)
                         
                         unique_viewers = list(set([href if href.startswith("http") else f"https://contests.npcnewsonline.com/{href.lstrip('/')}" for href in viewer_links if href]))
 
-                        # --- EXTRACT IMAGE SRCs WITH PLAYWRIGHT ---
                         image_targets = []
                         for idx, v_url in enumerate(unique_viewers):
                             try:
@@ -229,7 +236,6 @@ class NPCNewsScraper:
                             except:
                                 continue
 
-                        # --- PARALLEL BINARY DOWNLOAD ---
                         successful_images = 0
                         if image_targets:
                             with ThreadPoolExecutor(max_workers=CONFIG["MAX_WORKERS"]) as executor:

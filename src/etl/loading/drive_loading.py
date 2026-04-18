@@ -22,11 +22,16 @@ def upload_to_drive(source_path: str, remote_destination: str, delete_after: boo
     print(f" Destination: {remote_destination}")
 
     try:
-        # Run the rclone command with real-time output
-        subprocess.run(
-            ["rclone", command, source_path, remote_destination, "--progress"],
-            check=True
-        )
+        # Run the rclone command with optimized flags for speed
+        # --transfers: Number of file transfers to run in parallel
+        # --drive-chunk-size: Upload chunk size (higher is faster but uses more RAM)
+        rclone_cmd = [
+            "rclone", command, source_path, remote_destination, 
+            "--progress", 
+            "--transfers", "10", 
+            "--drive-chunk-size", "64M"
+        ]
+        subprocess.run(rclone_cmd, check=True)
         print(f"\n {command.capitalize()} successfully completed!")
         
     except subprocess.CalledProcessError as e:

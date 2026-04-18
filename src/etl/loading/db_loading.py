@@ -26,7 +26,21 @@ class DatabaseManager:
                     UNIQUE(year, contest_name, division, athlete_name, image_filename)
                 )
             ''')
+            # Index for faster idempotency checks during scraping
+            self.cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_athlete_lookup 
+                ON athletes (year, contest_name, division, athlete_name)
+            ''')
             self.conn.commit()
+
+    def get_processed_athletes_for_contest(self, year, contest):
+        """Returns a set of (division, athlete_name) already in DB for a contest."""
+        with self.lock:
+            self.cursor.execute('''
+                SELECT DISTINCT division, athlete_name FROM athletes 
+                WHERE year = ? AND contest_name = ?
+            ''', (year, contest))
+            return set(self.cursor.fetchall())
 
     def insert_record(self, year, contest, division, placing, athlete, filename, commit=True):
         with self.lock:
