@@ -2,17 +2,18 @@ import os
 import json
 import argparse
 import requests
-import subprocess
 from pathlib import Path
 from typing import List
 from playwright.sync_api import sync_playwright
+
+from src.etl.loading.drive_loading import upload_to_drive
 
 # --- CONFIGURATION ---
 CONFIG = {
     "BASE_URL": "https://contests.npcnewsonline.com/contests/",
     "STORAGE_BASE": "data/images",
     "METADATA_FILE": "data/images/metadata.json",
-    "GDRIVE_REMOTE": "gdrive:Bodybuilding_Dataset" # Change if you named your rclone config differently
+    "GDRIVE_REMOTE": "gdrive:Bodybuilding_Dataset" 
 }
 
 class NPCNewsScraper:
@@ -34,7 +35,6 @@ class NPCNewsScraper:
         try:
             res = self.img_session.get(url, timeout=15)
             if res.status_code == 200:
-                # LAZY CREATION: Make the folder only if we have an image
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with open(path, "wb") as f:
                     f.write(res.content)
@@ -61,7 +61,6 @@ class NPCNewsScraper:
                 year_url = f"{CONFIG['BASE_URL']}{year}/"
                 page.goto(year_url, wait_until="networkidle")
                 
-                # 1. Batch extract contest links
                 contest_data = page.locator("a[href*='/contests/20']").evaluate_all("""
                     elements => elements.map(el => ({
                         href: el.getAttribute('href') || '',
@@ -102,7 +101,6 @@ class NPCNewsScraper:
                         page.goto(contest["href"], wait_until="networkidle", timeout=15000)
                         page.wait_for_timeout(2000)
 
-                    # 2. Batch extract athlete sub-paths
                     c_path = page.url.replace("https://contests.npcnewsonline.com", "").rstrip("/")
                     links_data = page.locator("a").evaluate_all("""
                         elements => elements.map(el => ({
@@ -139,7 +137,6 @@ class NPCNewsScraper:
                         page.goto(ath_url, wait_until="networkidle")
                         page.wait_for_timeout(1000)
                         
-                        # 3. Get High-Res Viewer Links
                         viewer_links = page.locator("a[href*='images.php']").evaluate_all("""
                             elements => elements.map(el => el.getAttribute('href'))
                         """)
@@ -178,7 +175,7 @@ class NPCNewsScraper:
                                         self.metadata[year_str][c_name].setdefault("General", {}).setdefault(ath_name, []).append(filename)
                                         successful_images += 1
                             except Exception as e:
-                                pass # Skip if viewer page fails to load
+                                pass 
                         
                         if successful_images > 0:
                             print(f"      Athlete: {ath_name} -> Done: {successful_images} High-Res images")
@@ -190,33 +187,14 @@ class NPCNewsScraper:
         with open(CONFIG["METADATA_FILE"], "w") as f:
             json.dump(self.metadata, f, indent=4)
 
-def upload_to_drive():
-    """Triggers Rclone to sync the local images directory to Google Drive"""
-    print("\n==================================================")
-    print("🚀 Starting upload to Google Drive via Rclone...")
-    print("==================================================")
-    try:
-        # Calls: rclone copy data/images gdrive:Bodybuilding_Dataset --progress
-        subprocess.run([
-            "rclone", "copy", CONFIG["STORAGE_BASE"], 
-            CONFIG["GDRIVE_REMOTE"], "--progress"
-        ], check=True)
-        print("\n✅ Upload successfully completed!")
-    except subprocess.CalledProcessError as e:
-        print(f"\n❌ Upload failed. Make sure Rclone is configured properly. Error: {e}")
-    except FileNotFoundError:
-        print("\n❌ Rclone not found! Ensure it is installed on your system.")
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--year", type=int, help="Specific year to scrape (e.g., 2011)")
     parser.add_argument("--upload", action="store_true", help="Upload the dataset to Google Drive when finished")
     args = parser.parse_args()
     
-    # Run the scraper
     scraper = NPCNewsScraper([args.year] if args.year else list(range(2011, 2027)))
     scraper.run()
     
-    # Run the upload if the flag was passed
     if args.upload:
-        upload_to_drive()
+        upload_to_drive(CONFIG["STORAGE_BASE"], CONFIG["GDRIVE_REMOTE"])
