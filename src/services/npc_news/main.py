@@ -204,4 +204,3 @@ if __name__ == "__main__":
     if args.upload:
         # Upload the images and the database itself
         upload_to_drive(CONFIG["STORAGE_BASE"], CONFIG["GDRIVE_REMOTE"])
-        upload_to_drive(f"{CONFIG['STORAGE_BASE']}/npc_data.db", CONFIG["GDRIVE_REMOTE"])
