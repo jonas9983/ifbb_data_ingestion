@@ -18,7 +18,7 @@ CONFIG = {
     "STORAGE_BASE": "data/npc_news",
     "GDRIVE_REMOTE": "gdrive:Bodybuilding_Dataset",
     "DISK_LIMIT_GB": 20,
-    "MAX_WORKERS": 10
+    "MAX_WORKERS": 5
 }
 
 class NPCNewsScraper:
@@ -56,28 +56,11 @@ class NPCNewsScraper:
         # Ensure STORAGE_BASE exists for next batches
         Path(CONFIG["STORAGE_BASE"]).mkdir(parents=True, exist_ok=True)
 
-    def _process_viewer(self, viewer_url: str, target_path: Path, year, contest, division, placing, athlete, idx):
-        """Fetches high-res image from viewer URL without full Playwright load."""
-        try:
-            # Jitter to avoid bot detection
-            time.sleep(random.uniform(0.5, 1.5))
-            
-            res = self.img_session.get(viewer_url, timeout=15)
-            if res.status_code != 200: return False
-            
-            # Extract high-res src using regex
-            # Pattern looks for src='/images/contests/...'
-            match = re.search(r"src='(/images/contests/[^']+)'", res.text)
-            if not match:
-                match = re.search(r'src="(/images/contests/[^"]+)"', res.text)
-                
-            if match:
-                high_res_src = f"https://contests.npcnewsonline.com{match.group(1)}"
-                if self.download_image(high_res_src, target_path):
-                    self.db.insert_record(year, contest, division, placing, athlete, target_path.name, commit=False)
-                    return True
-        except Exception as e:
-            print(f"      Error processing {viewer_url}: {e}")
+    def _download_task(self, url: str, path: Path, year, contest, division, placing, athlete):
+        """Pure binary download task for the thread pool."""
+        if self.download_image(url, path):
+            self.db.insert_record(year, contest, division, placing, athlete, path.name, commit=False)
+            return True
         return False
 
     def download_image(self, url: str, path: Path):
@@ -176,15 +159,16 @@ class NPCNewsScraper:
 
                     print(f"    Found {len(ath_galleries)} athletes/links. Processing...")
 
-                    for ath in ath_galleries:
+                    for idx_ath, ath in enumerate(ath_galleries):
                         placing, ath_name = self._parse_athlete_name(ath["raw_text"])
                         division = ath["division"]
                         
                         # --- IDEMPOTENCY CHECK ---
                         if self.db.is_athlete_processed(year, c_name, division, ath_name):
-                            print(f"      Skipping {ath_name} [{division}] (Already in DB)")
+                            print(f"      [{idx_ath+1}/{len(ath_galleries)}] Skipping {ath_name} (Already in DB)")
                             continue
 
+                        print(f"      [{idx_ath+1}/{len(ath_galleries)}] Processing Athlete: {ath_name}...")
                         ath_url = ath["url"]
                         if not ath_url.startswith("http"):
                             ath_url = f"https://contests.npcnewsonline.com{ath_url}"
@@ -202,27 +186,45 @@ class NPCNewsScraper:
                         
                         unique_viewers = list(set([href if href.startswith("http") else f"https://contests.npcnewsonline.com/{href.lstrip('/')}" for href in viewer_links if href]))
 
-                        # --- PARALLEL IMAGE PROCESSING ---
+                        # --- EXTRACT IMAGE SRCs WITH PLAYWRIGHT ---
+                        image_targets = []
+                        for idx, v_url in enumerate(unique_viewers):
+                            try:
+                                page.goto(v_url, wait_until="domcontentloaded", timeout=10000)
+                                high_res_src = page.locator("img").evaluate_all("""
+                                    elements => {
+                                        for(let img of elements) {
+                                            let src = img.getAttribute('src') || '';
+                                            if(src.includes('/images/contests/') && !src.includes('thumb')) return src;
+                                        }
+                                        return null;
+                                    }
+                                """)
+                                if high_res_src:
+                                    if not high_res_src.startswith("http"): 
+                                        high_res_src = f"https://contests.npcnewsonline.com{high_res_src}"
+                                    
+                                    c_clean = self._sanitize(c_name)
+                                    d_clean = self._sanitize(division)
+                                    a_clean = self._sanitize(ath_name)
+                                    filename = f"{year_str}_{c_clean}_{d_clean}_{a_clean}_{idx+1}.jpg"
+                                    image_targets.append((high_res_src, target_dir / filename))
+                            except:
+                                continue
+
+                        # --- PARALLEL BINARY DOWNLOAD ---
                         successful_images = 0
-                        with ThreadPoolExecutor(max_workers=CONFIG["MAX_WORKERS"]) as executor:
-                            futures = []
-                            for idx, v_url in enumerate(unique_viewers):
-                                c_clean = self._sanitize(c_name)
-                                d_clean = self._sanitize(division)
-                                a_clean = self._sanitize(ath_name)
-                                filename = f"{year_str}_{c_clean}_{d_clean}_{a_clean}_{idx+1}.jpg"
-                                target_path = target_dir / filename
-                                
-                                futures.append(executor.submit(
-                                    self._process_viewer, v_url, target_path, year, c_name, division, placing, ath_name, idx
-                                ))
-                            
-                            for f in futures:
-                                if f.result(): successful_images += 1
+                        if image_targets:
+                            with ThreadPoolExecutor(max_workers=CONFIG["MAX_WORKERS"]) as executor:
+                                futures = [executor.submit(self._download_task, url, path, year, c_name, division, placing, ath_name) for url, path in image_targets]
+                                for f in futures:
+                                    if f.result(): successful_images += 1
                         
                         if successful_images > 0:
                             self.db.commit()
                             print(f"      Athlete: {ath_name} [{division}] -> {successful_images} images saved.")
+                        else:
+                            print(f"      Athlete: {ath_name} [{division}] -> No images found.")
 
                         # --- DISK SPACE CHECK ---
                         if self._get_storage_size_gb() >= CONFIG["DISK_LIMIT_GB"]:
