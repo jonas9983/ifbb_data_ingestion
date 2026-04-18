@@ -1,8 +1,12 @@
 import os
 import argparse
 import requests
+import re
+import time
+import random
 from pathlib import Path
 from typing import List
+from concurrent.futures import ThreadPoolExecutor
 from playwright.sync_api import sync_playwright
 
 from src.etl.loading.drive_loading import upload_to_drive
@@ -12,13 +16,16 @@ from src.etl.loading.db_loading import DatabaseManager
 CONFIG = {
     "BASE_URL": "https://contests.npcnewsonline.com/contests/",
     "STORAGE_BASE": "data/npc_news",
-    "GDRIVE_REMOTE": "gdrive:Bodybuilding_Dataset" 
+    "GDRIVE_REMOTE": "gdrive:Bodybuilding_Dataset",
+    "DISK_LIMIT_GB": 20,
+    "MAX_WORKERS": 10
 }
 
 class NPCNewsScraper:
     def __init__(self, years: List[int]):
         self.years = years
-        self.db = DatabaseManager(f"{CONFIG['STORAGE_BASE']}/npc_data.db")
+        # Save DB in data/ so it's not deleted during STORAGE_BASE cleanup
+        self.db = DatabaseManager("data/npc_data.db")
         self.img_session = requests.Session()
         self.img_session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
@@ -35,6 +42,44 @@ class NPCNewsScraper:
             return int(parts[0]), parts[1].strip()
         return None, raw_text.strip()
 
+    def _get_storage_size_gb(self) -> float:
+        """Calculates total size of STORAGE_BASE in GB."""
+        root_directory = Path(CONFIG["STORAGE_BASE"])
+        if not root_directory.exists(): return 0
+        total_size = sum(f.stat().st_size for f in root_directory.glob('**/*') if f.is_file())
+        return total_size / (1024**3)
+
+    def _upload_and_cleanup(self):
+        """Uploads STORAGE_BASE to Drive and clears local files."""
+        print(f"\n[Maintenance] Triggering upload and cleanup...")
+        upload_to_drive(CONFIG["STORAGE_BASE"], CONFIG["GDRIVE_REMOTE"], delete_after=True)
+        # Ensure STORAGE_BASE exists for next batches
+        Path(CONFIG["STORAGE_BASE"]).mkdir(parents=True, exist_ok=True)
+
+    def _process_viewer(self, viewer_url: str, target_path: Path, year, contest, division, placing, athlete, idx):
+        """Fetches high-res image from viewer URL without full Playwright load."""
+        try:
+            # Jitter to avoid bot detection
+            time.sleep(random.uniform(0.5, 1.5))
+            
+            res = self.img_session.get(viewer_url, timeout=15)
+            if res.status_code != 200: return False
+            
+            # Extract high-res src using regex
+            # Pattern looks for src='/images/contests/...'
+            match = re.search(r"src='(/images/contests/[^']+)'", res.text)
+            if not match:
+                match = re.search(r'src="(/images/contests/[^"]+)"', res.text)
+                
+            if match:
+                high_res_src = f"https://contests.npcnewsonline.com{match.group(1)}"
+                if self.download_image(high_res_src, target_path):
+                    self.db.insert_record(year, contest, division, placing, athlete, target_path.name, commit=False)
+                    return True
+        except Exception as e:
+            print(f"      Error processing {viewer_url}: {e}")
+        return False
+
     def download_image(self, url: str, path: Path):
         """Downloads the raw binary image file."""
         if path.exists(): return True
@@ -49,6 +94,9 @@ class NPCNewsScraper:
         return False
 
     def run(self):
+        # Ensure storage base exists
+        Path(CONFIG["STORAGE_BASE"]).mkdir(parents=True, exist_ok=True)
+        
         with sync_playwright() as p:
             print("Launching browser with stealth settings...")
             browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
@@ -154,40 +202,34 @@ class NPCNewsScraper:
                         
                         unique_viewers = list(set([href if href.startswith("http") else f"https://contests.npcnewsonline.com/{href.lstrip('/')}" for href in viewer_links if href]))
 
+                        # --- PARALLEL IMAGE PROCESSING ---
                         successful_images = 0
-                        for idx, viewer_url in enumerate(unique_viewers):
-                            try:
-                                # Visit high-res viewer
-                                page.goto(viewer_url, wait_until="domcontentloaded", timeout=10000)
-                                high_res_src = page.locator("img").evaluate_all("""
-                                    elements => {
-                                        for(let img of elements) {
-                                            let src = img.getAttribute('src') || '';
-                                            if(src.includes('/images/contests/') && !src.includes('thumb')) return src;
-                                        }
-                                        return null;
-                                    }
-                                """)
+                        with ThreadPoolExecutor(max_workers=CONFIG["MAX_WORKERS"]) as executor:
+                            futures = []
+                            for idx, v_url in enumerate(unique_viewers):
+                                c_clean = self._sanitize(c_name)
+                                d_clean = self._sanitize(division)
+                                a_clean = self._sanitize(ath_name)
+                                filename = f"{year_str}_{c_clean}_{d_clean}_{a_clean}_{idx+1}.jpg"
+                                target_path = target_dir / filename
                                 
-                                if high_res_src:
-                                    if not high_res_src.startswith("http"): 
-                                        high_res_src = f"https://contests.npcnewsonline.com{high_res_src}"
-                                    
-                                    # FLAT FILENAME: 2011_Mr_Olympia_Mens_Bodybuilding_Phil_Heath_1.jpg
-                                    c_clean = self._sanitize(c_name)
-                                    d_clean = self._sanitize(division)
-                                    a_clean = self._sanitize(ath_name)
-                                    filename = f"{year_str}_{c_clean}_{d_clean}_{a_clean}_{idx+1}.jpg"
-                                    
-                                    if self.download_image(high_res_src, target_dir / filename):
-                                        # Log to DB
-                                        self.db.insert_record(year, c_name, division, placing, ath_name, filename)
-                                        successful_images += 1
-                            except Exception:
-                                continue 
+                                futures.append(executor.submit(
+                                    self._process_viewer, v_url, target_path, year, c_name, division, placing, ath_name, idx
+                                ))
+                            
+                            for f in futures:
+                                if f.result(): successful_images += 1
                         
                         if successful_images > 0:
+                            self.db.commit()
                             print(f"      Athlete: {ath_name} [{division}] -> {successful_images} images saved.")
+
+                        # --- DISK SPACE CHECK ---
+                        if self._get_storage_size_gb() >= CONFIG["DISK_LIMIT_GB"]:
+                            self._upload_and_cleanup()
+
+                # --- END OF YEAR MAINTENANCE ---
+                self._upload_and_cleanup()
 
             browser.close()
             self.db.close()
@@ -195,12 +237,8 @@ class NPCNewsScraper:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--year", type=int, help="Specific year to scrape")
-    parser.add_argument("--upload", action="store_true", help="Upload images and DB to GDrive")
+    parser.add_argument("--upload", action="store_true", help="DEPRECATED: Upload is now automated, but kept for compatibility.")
     args = parser.parse_args()
-    
+
     scraper = NPCNewsScraper([args.year] if args.year else list(range(2011, 2027)))
     scraper.run()
-    
-    if args.upload:
-        # Upload the images and the database itself
-        upload_to_drive(CONFIG["STORAGE_BASE"], CONFIG["GDRIVE_REMOTE"])
