@@ -96,8 +96,7 @@ class NPCNewsScraper:
                 year_url = f"{CONFIG['BASE_URL']}{year}/"
                 page.goto(year_url, wait_until="domcontentloaded", timeout=60000)
                 
-                # Extract contest links
-                contest_data = page.locator("a[href*='/contests/20']").evaluate_all("""
+                contest_data = page.locator(".td-pb-span8.td-main-content a[href*='/contests/20']").evaluate_all("""
                     elements => elements.map(el => ({
                         href: el.getAttribute('href') || '',
                         name: el.innerText.trim()
@@ -226,11 +225,9 @@ class NPCNewsScraper:
                         else:
                             print(f"      Athlete: {ath_name} [{division}] -> No images found.")
 
-                        # --- DISK SPACE CHECK ---
                         if self._get_storage_size_gb() >= CONFIG["DISK_LIMIT_GB"]:
                             self._upload_and_cleanup()
 
-                # --- END OF YEAR MAINTENANCE ---
                 self._upload_and_cleanup()
 
             browser.close()
@@ -239,7 +236,6 @@ class NPCNewsScraper:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--year", type=int, help="Specific year to scrape")
-    parser.add_argument("--upload", action="store_true", help="DEPRECATED: Upload is now automated, but kept for compatibility.")
     args = parser.parse_args()
 
     scraper = NPCNewsScraper([args.year] if args.year else list(range(2011, 2027)))
