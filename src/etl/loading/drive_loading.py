@@ -2,7 +2,6 @@ import os
 import subprocess
 import argparse
 import sys
-from pathlib import Path
 
 def upload_to_drive(source_path: str, remote_destination: str):
     """
@@ -13,7 +12,7 @@ def upload_to_drive(source_path: str, remote_destination: str):
         remote_destination (str): The rclone remote and path (e.g., 'gdrive:Bodybuilding_Dataset')
     """
     if not os.path.exists(source_path):
-        print(f"❌ Error: The source path '{source_path}' does not exist.")
+        print(f" Error: The source path '{source_path}' does not exist.")
         sys.exit(1)
 
     print("\n==================================================")

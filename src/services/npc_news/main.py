@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List
 from playwright.sync_api import sync_playwright
 
-from drive_loading import upload_to_drive
+from src.etl.loading.drive_loading import upload_to_drive
 
 # --- CONFIGURATION ---
 CONFIG = {
@@ -44,13 +44,13 @@ class NPCNewsScraper:
 
     def run(self):
         with sync_playwright() as p:
-            print("Launching browser with stealth settings...")
+            print("Launching browser...")
             browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
             context = browser.new_context(viewport={'width': 1280, 'height': 800})
             page = context.new_page()
             
             print("Warming up session...")
-            page.goto("https://contests.npcnewsonline.com/", wait_until="networkidle")
+            page.goto("https://contests.npcnewsonline.com/", wait_until="domcontentloaded")
             page.wait_for_timeout(2000)
 
             for year in self.years:
@@ -59,7 +59,7 @@ class NPCNewsScraper:
                 self.metadata[year_str] = {}
                 
                 year_url = f"{CONFIG['BASE_URL']}{year}/"
-                page.goto(year_url, wait_until="networkidle")
+                page.goto(year_url, wait_until="domcontentloaded")
                 
                 contest_data = page.locator("a[href*='/contests/20']").evaluate_all("""
                     elements => elements.map(el => ({
@@ -89,16 +89,16 @@ class NPCNewsScraper:
                     print(f"  Contest: {c_name}")
                     self.metadata[year_str][c_name] = {}
 
-                    page.goto(year_url, wait_until="networkidle")
+                    page.goto(year_url, wait_until="domcontentloaded")
                     link_to_click = page.locator(f"a[href='{contest['href']}']").first
                     
                     try:
-                        with page.expect_navigation(wait_until="networkidle", timeout=15000):
+                        with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
                             link_to_click.click()
                         page.wait_for_timeout(2000)
                     except Exception as e:
                         print(f"    Click navigation failed for {c_name}. Using direct goto...")
-                        page.goto(contest["href"], wait_until="networkidle", timeout=15000)
+                        page.goto(contest["href"], wait_until="domcontentloaded", timeout=15000)
                         page.wait_for_timeout(2000)
 
                     c_path = page.url.replace("https://contests.npcnewsonline.com", "").rstrip("/")
@@ -134,7 +134,7 @@ class NPCNewsScraper:
                         
                         target_dir = Path(CONFIG["STORAGE_BASE"]) / year_str / self._sanitize(c_name) / "General" / self._sanitize(ath_name)
                         
-                        page.goto(ath_url, wait_until="networkidle")
+                        page.goto(ath_url, wait_until="domcontentloaded")
                         page.wait_for_timeout(1000)
                         
                         viewer_links = page.locator("a[href*='images.php']").evaluate_all("""
@@ -178,7 +178,7 @@ class NPCNewsScraper:
                                 pass 
                         
                         if successful_images > 0:
-                            print(f"      Athlete: {ath_name} -> Done: {successful_images} High-Res images")
+                            print(f"      Athlete: {ath_name} -> Done: {successful_images} images")
 
                 self._save_metadata()
             browser.close()
