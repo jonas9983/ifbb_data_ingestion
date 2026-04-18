@@ -3,7 +3,6 @@ from pathlib import Path
 
 class DatabaseManager:
     def __init__(self, db_path: str):
-        """Initializes the database connection and creates tables if they don't exist."""
         self.db_path = db_path
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(self.db_path)
@@ -16,34 +15,31 @@ class DatabaseManager:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 year INTEGER,
                 contest_name TEXT,
+                division TEXT,
                 placing INTEGER,
                 athlete_name TEXT,
                 image_filename TEXT,
-                local_path TEXT,
-                UNIQUE(year, contest_name, athlete_name, image_filename)
+                UNIQUE(year, contest_name, division, athlete_name, image_filename)
             )
         ''')
         self.conn.commit()
 
-    def insert_record(self, year, contest, placing, athlete, filename, local_path):
-        """Inserts a new image record into the database, ignoring duplicates."""
+    def insert_record(self, year, contest, division, placing, athlete, filename):
         try:
             self.cursor.execute('''
-                INSERT INTO athletes (year, contest_name, placing, athlete_name, image_filename, local_path)
+                INSERT INTO athletes (year, contest_name, division, placing, athlete_name, image_filename)
                 VALUES (?, ?, ?, ?, ?, ?)
-            ''', (year, contest, placing, athlete, filename, str(local_path)))
+            ''', (year, contest, division, placing, athlete, filename))
             self.conn.commit()
         except sqlite3.IntegrityError:
             pass # Record already exists
 
-    def is_athlete_processed(self, year, contest, athlete):
-        """Check if we already downloaded images for this specific athlete."""
+    def is_athlete_processed(self, year, contest, division, athlete):
         self.cursor.execute('''
             SELECT 1 FROM athletes 
-            WHERE year = ? AND contest_name = ? AND athlete_name = ?
-        ''', (year, contest, athlete))
+            WHERE year = ? AND contest_name = ? AND division = ? AND athlete_name = ?
+        ''', (year, contest, division, athlete))
         return self.cursor.fetchone() is not None
         
     def close(self):
-        """Safely close the database connection."""
         self.conn.close()

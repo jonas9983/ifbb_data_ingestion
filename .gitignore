@@ -17,3 +17,4 @@
 *.npz
 rf-detr
 .python*
+*.db

@@ -15,11 +15,9 @@ def upload_to_drive(source_path: str, remote_destination: str):
         print(f" Error: The source path '{source_path}' does not exist.")
         sys.exit(1)
 
-    print("\n==================================================")
     print(f" Starting Rclone Upload")
     print(f" Source: {source_path}")
     print(f" Destination: {remote_destination}")
-    print("==================================================\n")
 
     try:
         # Run the rclone copy command with real-time output

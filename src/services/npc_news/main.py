@@ -5,21 +5,20 @@ from pathlib import Path
 from typing import List
 from playwright.sync_api import sync_playwright
 
-from src.etl.loading.db_loading import DatabaseManager
+from src.services.npc_news.db_manager import DatabaseManager
 from src.etl.loading.drive_loading import upload_to_drive
 
 # --- CONFIGURATION ---
 CONFIG = {
     "BASE_URL": "https://contests.npcnewsonline.com/contests/",
-    "STORAGE_BASE": "data/npc_news",
-    "DB_FILE": "data/npc_news/npc_data.db",
+    "STORAGE_BASE": "data/images",
+    "DB_FILE": "data/npc_data.db",
     "GDRIVE_REMOTE": "gdrive:Bodybuilding_Dataset" 
 }
 
 class NPCNewsScraper:
     def __init__(self, years: List[int]):
         self.years = years
-        # Initialize the decoupled DB manager
         self.db = DatabaseManager(CONFIG["DB_FILE"])
         self.img_session = requests.Session()
         self.img_session.headers.update({
@@ -103,18 +102,32 @@ class NPCNewsScraper:
                     
                     ath_galleries = []
                     for data in links_data:
-                        href, text = data["href"], data["text"]
-                        if not href or not text or len(text) < 3: continue
-                        if c_path in href and href.rstrip("/") != c_path:
+                        raw_href, text = data["href"], data["text"]
+                        if not raw_href or not text or len(text) < 3: continue
+                        
+                        href_relative = raw_href.replace("https://contests.npcnewsonline.com", "")
+                        
+                        if c_path in href_relative and href_relative.rstrip("/") != c_path:
                             if text.lower() not in ["home", "back", "contests", "divisions"]:
-                                ath_galleries.append({"raw_text": text, "url": href})
+                                
+                                # --- Extract Division from URL! ---
+                                sub_path = href_relative.replace(c_path, "").strip("/")
+                                parts = sub_path.split("/")
+                                division = parts[0] if len(parts) >= 2 else "overall"
+
+                                ath_galleries.append({
+                                    "raw_text": text, 
+                                    "url": raw_href,
+                                    "division": division
+                                })
 
                     for ath in ath_galleries:
                         placing, ath_name = self._parse_athlete_name(ath["raw_text"])
+                        division = ath["division"]
                         
-                        # --- Check Database before navigating! ---
-                        if self.db.is_athlete_processed(year, c_name, ath_name):
-                            print(f"      Skipping {ath_name} (Already in database)")
+                        # Check DB with Division included!
+                        if self.db.is_athlete_processed(year, c_name, division, ath_name):
+                            print(f"      Skipping {ath_name} [{division}] (Already in DB)")
                             continue
 
                         ath_url = ath["url"]
@@ -149,22 +162,24 @@ class NPCNewsScraper:
                                     if not high_res_src.startswith("http"): 
                                         high_res_src = f"https://contests.npcnewsonline.com{high_res_src}"
                                     
+                                    # FLAT FILE NAMING: 2011_Mr_Olympia_figure_Nicole_Wilkins_1.jpg
                                     clean_contest = self._sanitize(c_name)
+                                    clean_div = self._sanitize(division)
                                     clean_ath = self._sanitize(ath_name)
-                                    filename = f"{year_str}_{clean_contest}_{clean_ath}_{idx+1}.jpg"
+                                    filename = f"{year_str}_{clean_contest}_{clean_div}_{clean_ath}_{idx+1}.jpg"
                                     local_path = target_dir / filename
                                     
                                     if self.download_image(high_res_src, local_path):
-                                        self.db.insert_record(year, c_name, placing, ath_name, filename, str(local_path))
+                                        # Save to Database! (local_path removed)
+                                        self.db.insert_record(year, c_name, division, placing, ath_name, filename)
                                         successful_images += 1
                             except Exception:
                                 pass 
                         
                         if successful_images > 0:
-                            print(f"      Athlete: {ath_name} (Place: {placing}) -> Downloaded {successful_images} images")
+                            print(f"      Athlete: {ath_name} [{division}] -> Downloaded {successful_images} images")
 
             browser.close()
-            # Clean up the database connection when scraping finishes
             self.db.close()
 
 if __name__ == "__main__":
@@ -178,5 +193,4 @@ if __name__ == "__main__":
     
     if args.upload:
         upload_to_drive(CONFIG["STORAGE_BASE"], CONFIG["GDRIVE_REMOTE"])
-        # Upload the decoupled SQLite DB 
         upload_to_drive(CONFIG["DB_FILE"], CONFIG["GDRIVE_REMOTE"])
