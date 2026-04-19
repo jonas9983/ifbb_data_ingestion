@@ -47,6 +47,15 @@ class NPCNewsScraper:
         self._upload_queued = False
         self._upload_lock = threading.Lock()
 
+        # 4. Storage Tracking
+        self.total_size_bytes = self._calculate_initial_size()
+
+    def _calculate_initial_size(self) -> int:
+        """Calculates initial size of STORAGE_BASE in bytes."""
+        root_directory = Path(CONFIG["STORAGE_BASE"])
+        if not root_directory.exists(): return 0
+        return sum(f.stat().st_size for f in root_directory.glob('**/*') if f.is_file())
+
     def _sanitize(self, name: str) -> str:
         """Cleans strings for filesystem safety."""
         return "".join(c for c in name if c.isalnum() or c in (" ", "-", "_")).strip().replace(" ", "_")
@@ -59,17 +68,14 @@ class NPCNewsScraper:
         return None, raw_text.strip()
 
     def _get_storage_size_gb(self) -> float:
-        """Calculates total size of STORAGE_BASE in GB."""
-        root_directory = Path(CONFIG["STORAGE_BASE"])
-        if not root_directory.exists(): return 0
-        total_size = sum(f.stat().st_size for f in root_directory.glob('**/*') if f.is_file())
-        return total_size / (1024**3)
+        """Returns total size of STORAGE_BASE in GB using tracked value."""
+        return self.total_size_bytes / (1024**3)
 
-    def _upload_and_cleanup(self, year: int = None):
-        """Uploads STORAGE_BASE and backs up Database to Drive."""
-        print(f"\n[Maintenance] Triggering upload and backup...")
+    def _upload_and_cleanup(self, year: int = None, backup_db: bool = False):
+        """Uploads STORAGE_BASE and optionally backs up Database to Drive."""
+        print(f"\n[Maintenance] Triggering upload...")
         
-        # 1. Upload/Move the images (Target the specific year to avoid scanning the whole drive)
+        # 1. Upload/Move the images
         if year:
             year_str = str(year)
             source_path = str(Path(CONFIG["STORAGE_BASE"]) / year_str)
@@ -80,36 +86,43 @@ class NPCNewsScraper:
         else:
             upload_to_drive(CONFIG["STORAGE_BASE"], CONFIG["GDRIVE_REMOTE"], delete_after=True)
         
-        # 2. Backup the database (Copy)
-        db_file = Path(f"data/{CONFIG['DB_NAME']}")
-        if db_file.exists():
-            print(f"Backing up database {db_file.name} to Drive...")
-            upload_to_drive(str(db_file), CONFIG["GDRIVE_REMOTE"])
+        # Recalculate size after move/cleanup
+        self.total_size_bytes = self._calculate_initial_size()
+
+        # 2. Backup the database (Only if requested or major sync)
+        if backup_db:
+            db_file = Path(f"data/{CONFIG['DB_NAME']}")
+            if db_file.exists():
+                print(f"Backing up database {db_file.name} to Drive...")
+                upload_to_drive(str(db_file), CONFIG["GDRIVE_REMOTE"])
 
         # Ensure STORAGE_BASE exists for next batches
         Path(CONFIG["STORAGE_BASE"]).mkdir(parents=True, exist_ok=True)
 
     def _download_task(self, url: str, path: Path, year, contest, division, placing, athlete):
         """Pure binary download task for the thread pool."""
-        if self.download_image(url, path):
+        size = self.download_image(url, path)
+        if size > 0:
+            with self._upload_lock:
+                self.total_size_bytes += size
             self.db.insert_record(year, contest, division, placing, athlete, path.name, commit=False)
             return True
         return False
 
-    def download_image(self, url: str, path: Path):
-        """Downloads the raw binary image file."""
-        if path.exists(): return True
+    def download_image(self, url: str, path: Path) -> int:
+        """Downloads the raw binary image file and returns its size."""
+        if path.exists(): return 0
         try:
-            res = self.img_session.get(url, timeout=15)
+            res = self.img_session.get(res.url if hasattr(res, 'url') else url, timeout=15)
             if res.status_code == 200:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with open(path, "wb") as f:
                     f.write(res.content)
-                return True
+                return len(res.content)
         except: pass
-        return False
+        return 0
 
-    def _async_upload_and_cleanup(self, year: int = None):
+    def _async_upload_and_cleanup(self, year: int = None, backup_db: bool = False):
         """Queues an upload task if one isn't already queued."""
         with self._upload_lock:
             if self._upload_queued:
@@ -118,7 +131,7 @@ class NPCNewsScraper:
         
         def task_wrapper():
             try:
-                self._upload_and_cleanup(year)
+                self._upload_and_cleanup(year, backup_db=backup_db)
             finally:
                 with self._upload_lock:
                     self._upload_queued = False
@@ -187,14 +200,8 @@ class NPCNewsScraper:
                         # --- PRE-FETCH PROCESSED ATHLETES ---
                         processed_set = self.db.get_processed_athletes_for_contest(year, c_name)
 
-                        page.goto(year_url, wait_until="domcontentloaded", timeout=60000)
-                        link_to_click = page.locator(f"a[href='{contest['href']}']").first
-                        
-                        try:
-                            with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
-                                link_to_click.click()
-                        except:
-                            page.goto(contest["href"], wait_until="domcontentloaded", timeout=15000)
+                        # Optimization: Navigate directly to the contest URL
+                        page.goto(contest["href"], wait_until="domcontentloaded", timeout=30000)
 
                         c_path = page.url.replace("https://contests.npcnewsonline.com", "").rstrip("/")
                         links_data = page.evaluate("""() => {
@@ -294,15 +301,16 @@ class NPCNewsScraper:
                                 print(f"      Athlete: {ath_name} [{division}] -> No images found.")
 
                             if self._get_storage_size_gb() >= CONFIG["DISK_LIMIT_GB"]:
-                                self._async_upload_and_cleanup(year)
+                                self._async_upload_and_cleanup(year, backup_db=True)
 
-                        # ONLY backup if we actually changed something
+                        # Upload images for the year but don't force DB backup every contest unless disk is full
                         if contest_new_images > 0:
-                            self._async_upload_and_cleanup(year)
+                            self._async_upload_and_cleanup(year, backup_db=False)
 
                 browser.close()
         finally:
-            print("\n[Shutdown] Waiting for background uploads to complete...")
+            print("\n[Shutdown] Performing final database backup and waiting for background uploads...")
+            self._upload_and_cleanup(backup_db=True) # Final synchronous cleanup
             self.upload_executor.shutdown(wait=True)
             self.db.close()
 
