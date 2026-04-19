@@ -73,31 +73,62 @@ class NPCNewsScraper:
 
     def _upload_and_cleanup(self, year: int = None, backup_db: bool = False):
         """Uploads STORAGE_BASE and optionally backs up Database to Drive."""
-        print(f"\n[Maintenance] Triggering upload...")
+        year_label = str(year) if year else "all"
+        timestamp = time.strftime("%H:%M:%S")
+        print(f"\n[{timestamp}] [Background Task] Syncing batch for Year: {year_label}...")
         
-        # 1. Upload/Move the images
+        # 1. Staging: Move files to a separate directory to avoid conflicts with active scraper
+        # This acts as a "snapshot" of the data at this moment
+        staging_id = f"{int(time.time())}_{year_label}"
+        staging_base = Path("data/upload_staging") / staging_id
+        staging_base.mkdir(parents=True, exist_ok=True)
+        
+        has_files = False
         if year:
-            year_str = str(year)
-            source_path = str(Path(CONFIG["STORAGE_BASE"]) / year_str)
-            remote_path = f"{CONFIG['GDRIVE_REMOTE']}/{year_str}"
-            if os.path.exists(source_path):
-                print(f"Syncing year {year_str} specifically to improve speed...")
-                upload_to_drive(source_path, remote_path, delete_after=True)
+            source_path = Path(CONFIG["STORAGE_BASE"]) / str(year)
+            if source_path.exists() and any(source_path.iterdir()):
+                target_staging = staging_base / str(year)
+                try:
+                    # Atomic move of the entire directory to staging
+                    source_path.rename(target_staging)
+                    has_files = True
+                except Exception as e:
+                    print(f"  [Error] Failed to stage files for {year}: {e}")
         else:
-            upload_to_drive(CONFIG["STORAGE_BASE"], CONFIG["GDRIVE_REMOTE"], delete_after=True)
-        
-        # Recalculate size after move/cleanup
-        self.total_size_bytes = self._calculate_initial_size()
+            # General cleanup: move all year folders to staging
+            if Path(CONFIG["STORAGE_BASE"]).exists():
+                for item in Path(CONFIG["STORAGE_BASE"]).iterdir():
+                    if item.is_dir() and any(item.iterdir()):
+                        item.rename(staging_base / item.name)
+                        has_files = True
 
-        # 2. Backup the database (Only if requested or major sync)
+        # 2. Upload the Staged snapshot
+        if has_files:
+            print(f"  [{timestamp}] [Sync] Uploading staged batch to Drive...")
+            upload_to_drive(str(staging_base), CONFIG["GDRIVE_REMOTE"], delete_after=True)
+            # Cleanup the empty staging root if rclone didn't
+            if staging_base.exists():
+                try: 
+                    # Use rmtree to ensure the whole staging batch is gone
+                    import shutil
+                    shutil.rmtree(staging_base)
+                except: pass
+        else:
+            # Cleanup unused staging folder
+            try: staging_base.rmdir()
+            except: pass
+
+        # 3. Backup the database (Only if requested or major sync)
         if backup_db:
             db_file = Path(f"data/{CONFIG['DB_NAME']}")
             if db_file.exists():
-                print(f"Backing up database {db_file.name} to Drive...")
+                print(f"  [{timestamp}] [Backup] Backing up database to Drive...")
                 upload_to_drive(str(db_file), CONFIG["GDRIVE_REMOTE"])
 
-        # Ensure STORAGE_BASE exists for next batches
+        # Ensure active directory exists for next scraper threads
         Path(CONFIG["STORAGE_BASE"]).mkdir(parents=True, exist_ok=True)
+        self.total_size_bytes = self._calculate_initial_size()
+        print(f"[{time.strftime('%H:%M:%S')}] [Background Task] Sync for {year_label} completed.\n")
 
     def _download_task(self, url: str, path: Path, year, contest, division, placing, athlete):
         """Pure binary download task for the thread pool."""
