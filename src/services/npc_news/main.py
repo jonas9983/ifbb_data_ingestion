@@ -158,8 +158,10 @@ class NPCNewsScraper:
                     c_name = contest["name"]
                     print(f"  Contest: {c_name}")
 
+                    # Track new images saved in THIS contest
+                    contest_new_images = 0
+
                     # --- PRE-FETCH PROCESSED ATHLETES ---
-                    # Optimization: Get all processed athletes for this contest in one go
                     processed_set = self.db.get_processed_athletes_for_contest(year, c_name)
 
                     page.goto(year_url, wait_until="domcontentloaded", timeout=60000)
@@ -210,7 +212,7 @@ class NPCNewsScraper:
                         
                         # --- IDEMPOTENCY CHECK (In Memory) ---
                         if (division, ath_name) in processed_set:
-                            # Log every 100 skipped to show progress without flooding
+                            # Log progress without flooding
                             if (idx_ath + 1) % 100 == 0 or idx_ath == 0 or (idx_ath + 1) == len(ath_galleries):
                                 print(f"      [{idx_ath+1}/{len(ath_galleries)}] Skipping {ath_name} (Already in DB)")
                             continue
@@ -263,6 +265,7 @@ class NPCNewsScraper:
                         
                         if successful_images > 0:
                             self.db.commit()
+                            contest_new_images += successful_images
                             print(f"      Athlete: {ath_name} [{division}] -> {successful_images} images saved.")
                         else:
                             print(f"      Athlete: {ath_name} [{division}] -> No images found.")
@@ -270,8 +273,9 @@ class NPCNewsScraper:
                         if self._get_storage_size_gb() >= CONFIG["DISK_LIMIT_GB"]:
                             self._upload_and_cleanup(year)
 
-                    # After each contest, backup the database to Drive (more frequent than once per year)
-                    self._upload_and_cleanup(year)
+                    # ONLY backup if we actually changed something
+                    if contest_new_images > 0:
+                        self._upload_and_cleanup(year)
 
             browser.close()
             self.db.close()

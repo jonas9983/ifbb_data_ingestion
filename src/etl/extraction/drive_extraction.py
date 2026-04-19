@@ -23,10 +23,12 @@ def download_from_drive(remote_path: str, local_destination: str):
         local_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        # Run rclone copy from remote to local
-        # --update: skip files that are newer on the destination
+        # Use copyto for single files, copy for directories
+        mode = "copyto" if local_path.suffix else "copy"
+        
+        # Run rclone command
         rclone_cmd = [
-            "rclone", "copy", remote_path, local_destination,
+            "rclone", mode, remote_path, local_destination,
             "--update",
             "--transfers", "16",
             "--checkers", "32",
