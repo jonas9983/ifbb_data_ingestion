@@ -139,6 +139,21 @@ class NPCNewsScraper:
         
         self.upload_executor.submit(task_wrapper)
 
+    def _find_high_res_src(self, v_url: str):
+        """Finds high-res image source from a viewer page using fast requests."""
+        try:
+            res = self.img_session.get(v_url, timeout=10)
+            if res.status_code == 200:
+                # Regex to find src=".../images/contests/..." but NOT "thumb"
+                match = re.search(r'src=["\']([^"\']+/images/contests/(?!.*thumb)[^"\']+)["\']', res.text)
+                if match:
+                    src = match.group(1)
+                    if not src.startswith("http"):
+                        src = f"https://contests.npcnewsonline.com{src}"
+                    return src
+        except: pass
+        return None
+
     def run(self):
         # Ensure storage base exists
         Path(CONFIG["STORAGE_BASE"]).mkdir(parents=True, exist_ok=True)
@@ -262,30 +277,21 @@ class NPCNewsScraper:
                             
                             unique_viewers = list(set([href if href.startswith("http") else f"https://contests.npcnewsonline.com/{href.lstrip('/')}" for href in viewer_links if href]))
 
+                            # --- PARALLEL IMAGE LINK DISCOVERY ---
                             image_targets = []
-                            for idx, v_url in enumerate(unique_viewers):
-                                try:
-                                    page.goto(v_url, wait_until="domcontentloaded", timeout=10000)
-                                    high_res_src = page.locator("img").evaluate_all("""
-                                        elements => {
-                                            for(let img of elements) {
-                                                let src = img.getAttribute('src') || '';
-                                                if(src.includes('/images/contests/') && !src.includes('thumb')) return src;
-                                            }
-                                            return null;
-                                        }
-                                    """)
-                                    if high_res_src:
-                                        if not high_res_src.startswith("http"): 
-                                            high_res_src = f"https://contests.npcnewsonline.com{high_res_src}"
-                                        
-                                        c_clean = self._sanitize(c_name)
-                                        d_clean = self._sanitize(division)
-                                        a_clean = self._sanitize(ath_name)
-                                        filename = f"{year_str}_{c_clean}_{d_clean}_{a_clean}_{idx+1}.jpg"
-                                        image_targets.append((high_res_src, target_dir / filename))
-                                except:
-                                    continue
+                            if unique_viewers:
+                                with ThreadPoolExecutor(max_workers=CONFIG["MAX_WORKERS"] * 2) as discovery_executor:
+                                    # Use a higher worker count for simple network discovery
+                                    results = list(discovery_executor.map(self._find_high_res_src, unique_viewers))
+                                    
+                                    c_clean = self._sanitize(c_name)
+                                    d_clean = self._sanitize(division)
+                                    a_clean = self._sanitize(ath_name)
+                                    
+                                    for idx, high_res_src in enumerate(results):
+                                        if high_res_src:
+                                            filename = f"{year_str}_{c_clean}_{d_clean}_{a_clean}_{idx+1}.jpg"
+                                            image_targets.append((high_res_src, target_dir / filename))
 
                             successful_images = 0
                             if image_targets:
