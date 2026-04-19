@@ -52,7 +52,7 @@ def download_youtube_video(url: str, output_dir: Path):
 def main():
     parser = argparse.ArgumentParser(description="Download a YouTube video and upload it to Google Drive.")
     parser.add_argument("url", help="The YouTube video URL")
-    parser.add_argument("--remote", default="gdrive:personal/Bodybuilding_Dataset/Videos", 
+    parser.add_argument("--remote", default="gdrive:personal/Bodybuilding_Dataset/Videos",
                         help="The rclone remote destination (default: gdrive:personal/Bodybuilding_Dataset/Videos)")
     parser.add_argument("--keep", action="store_true", help="Keep the local file after upload")
     
