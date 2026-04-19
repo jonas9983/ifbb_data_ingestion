@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from playwright.sync_api import sync_playwright
 
 from src.etl.loading.drive_loading import upload_to_drive
+from src.etl.extraction.drive_extraction import download_from_drive
 from src.etl.loading.db_loading import DatabaseManager
 
 # --- CONFIGURATION ---
@@ -18,14 +19,23 @@ CONFIG = {
     "STORAGE_BASE": "data/npc_news",
     "GDRIVE_REMOTE": "gdrive:personal/Bodybuilding_Dataset",
     "DISK_LIMIT_GB": 20,
-    "MAX_WORKERS": 5
+    "MAX_WORKERS": 5,
+    "DB_NAME": "npc_data.db"
 }
 
 class NPCNewsScraper:
     def __init__(self, years: List[int]):
         self.years = years
-        # Save DB in data/ so it's not deleted during STORAGE_BASE cleanup
-        self.db = DatabaseManager("data/npc_data.db")
+        
+        # 1. Try to download the latest database from Drive before starting
+        db_path = f"data/{CONFIG['DB_NAME']}"
+        remote_db_path = f"{CONFIG['GDRIVE_REMOTE']}/{CONFIG['DB_NAME']}"
+        print(f"[Startup] Checking for remote database at {remote_db_path}...")
+        download_from_drive(remote_db_path, db_path)
+
+        # 2. Initialize Database with the (potentially updated) local file
+        self.db = DatabaseManager(db_path)
+        
         self.img_session = requests.Session()
         self.img_session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
@@ -49,15 +59,23 @@ class NPCNewsScraper:
         total_size = sum(f.stat().st_size for f in root_directory.glob('**/*') if f.is_file())
         return total_size / (1024**3)
 
-    def _upload_and_cleanup(self):
+    def _upload_and_cleanup(self, year: int = None):
         """Uploads STORAGE_BASE and backs up Database to Drive."""
         print(f"\n[Maintenance] Triggering upload and backup...")
         
-        # 1. Upload/Move the images
-        upload_to_drive(CONFIG["STORAGE_BASE"], CONFIG["GDRIVE_REMOTE"], delete_after=True)
+        # 1. Upload/Move the images (Target the specific year to avoid scanning the whole drive)
+        if year:
+            year_str = str(year)
+            source_path = str(Path(CONFIG["STORAGE_BASE"]) / year_str)
+            remote_path = f"{CONFIG['GDRIVE_REMOTE']}/{year_str}"
+            if os.path.exists(source_path):
+                print(f"Syncing year {year_str} specifically to improve speed...")
+                upload_to_drive(source_path, remote_path, delete_after=True)
+        else:
+            upload_to_drive(CONFIG["STORAGE_BASE"], CONFIG["GDRIVE_REMOTE"], delete_after=True)
         
         # 2. Backup the database (Copy)
-        db_file = Path("data/npc_data.db")
+        db_file = Path(f"data/{CONFIG['DB_NAME']}")
         if db_file.exists():
             print(f"Backing up database {db_file.name} to Drive...")
             upload_to_drive(str(db_file), CONFIG["GDRIVE_REMOTE"])
@@ -250,9 +268,10 @@ class NPCNewsScraper:
                             print(f"      Athlete: {ath_name} [{division}] -> No images found.")
 
                         if self._get_storage_size_gb() >= CONFIG["DISK_LIMIT_GB"]:
-                            self._upload_and_cleanup()
+                            self._upload_and_cleanup(year)
 
-                self._upload_and_cleanup()
+                    # After each contest, backup the database to Drive (more frequent than once per year)
+                    self._upload_and_cleanup(year)
 
             browser.close()
             self.db.close()

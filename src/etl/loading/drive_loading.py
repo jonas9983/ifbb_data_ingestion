@@ -22,14 +22,15 @@ def upload_to_drive(source_path: str, remote_destination: str, delete_after: boo
     print(f" Destination: {remote_destination}")
 
     try:
-        # Run the rclone command with optimized flags for speed
-        # --transfers: Number of file transfers to run in parallel
-        # --drive-chunk-size: Upload chunk size (higher is faster but uses more RAM)
+        # Run the rclone command with optimized flags for speed and reduced verbosity
         rclone_cmd = [
             "rclone", command, source_path, remote_destination, 
-            "--progress", 
-            "--transfers", "10", 
-            "--drive-chunk-size", "64M"
+            "--transfers", "16", 
+            "--checkers", "32", 
+            "--drive-chunk-size", "64M",
+            "--fast-list",
+            "--stats", "30s",
+            "--stats-one-line"
         ]
         subprocess.run(rclone_cmd, check=True)
         print(f"\n {command.capitalize()} successfully completed!")
