@@ -111,9 +111,10 @@ class NPCNewsScraper:
 
     def download_image(self, url: str, path: Path) -> int:
         """Downloads the raw binary image file and returns its size."""
-        if path.exists(): return 0
+        if path.exists():
+            return path.stat().st_size
         try:
-            res = self.img_session.get(res.url if hasattr(res, 'url') else url, timeout=15)
+            res = self.img_session.get(url, timeout=15)
             if res.status_code == 200:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with open(path, "wb") as f:
