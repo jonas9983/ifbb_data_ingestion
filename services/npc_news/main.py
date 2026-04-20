@@ -21,7 +21,7 @@ CONFIG = {
     "STORAGE_BASE": "data/npc_news",
     "GDRIVE_REMOTE": "gdrive:personal/Bodybuilding_Dataset",
     "DISK_LIMIT_GB": 20,
-    "MAX_WORKERS": 5,
+    "MAX_WORKERS": 2, # Reduced to prevent rate-limiting and server crashes
     "DB_NAME": "npc_data_2013_fw.db"
 }
 
