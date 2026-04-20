@@ -5,6 +5,7 @@ import re
 import time
 import random
 import threading
+import shutil
 from pathlib import Path
 from typing import List
 from concurrent.futures import ThreadPoolExecutor
@@ -78,7 +79,6 @@ class NPCNewsScraper:
         print(f"\n[{timestamp}] [Background Task] Syncing batch for Year: {year_label}...")
         
         # 1. Staging: Move files to a separate directory to avoid conflicts with active scraper
-        # This acts as a "snapshot" of the data at this moment
         staging_id = f"{int(time.time())}_{year_label}"
         staging_base = Path("data/upload_staging") / staging_id
         staging_base.mkdir(parents=True, exist_ok=True)
@@ -89,13 +89,11 @@ class NPCNewsScraper:
             if source_path.exists() and any(source_path.iterdir()):
                 target_staging = staging_base / str(year)
                 try:
-                    # Atomic move of the entire directory to staging
                     source_path.rename(target_staging)
                     has_files = True
                 except Exception as e:
                     print(f"  [Error] Failed to stage files for {year}: {e}")
         else:
-            # General cleanup: move all year folders to staging
             if Path(CONFIG["STORAGE_BASE"]).exists():
                 for item in Path(CONFIG["STORAGE_BASE"]).iterdir():
                     if item.is_dir() and any(item.iterdir()):
@@ -106,15 +104,10 @@ class NPCNewsScraper:
         if has_files:
             print(f"  [{timestamp}] [Sync] Uploading staged batch to Drive...")
             upload_to_drive(str(staging_base), CONFIG["GDRIVE_REMOTE"], delete_after=True)
-            # Cleanup the empty staging root if rclone didn't
             if staging_base.exists():
-                try: 
-                    # Use rmtree to ensure the whole staging batch is gone
-                    import shutil
-                    shutil.rmtree(staging_base)
+                try: shutil.rmtree(staging_base)
                 except: pass
         else:
-            # Cleanup unused staging folder
             try: staging_base.rmdir()
             except: pass
 
@@ -125,7 +118,6 @@ class NPCNewsScraper:
                 print(f"  [{timestamp}] [Backup] Backing up database to Drive...")
                 upload_to_drive(str(db_file), CONFIG["GDRIVE_REMOTE"])
 
-        # Ensure active directory exists for next scraper threads
         Path(CONFIG["STORAGE_BASE"]).mkdir(parents=True, exist_ok=True)
         self.total_size_bytes = self._calculate_initial_size()
         print(f"[{time.strftime('%H:%M:%S')}] [Background Task] Sync for {year_label} completed.\n")
@@ -175,7 +167,6 @@ class NPCNewsScraper:
         try:
             res = self.img_session.get(v_url, timeout=10)
             if res.status_code == 200:
-                # Regex to find src=".../images/contests/..." but NOT "thumb"
                 match = re.search(r'src=["\']([^"\']+/images/contests/(?!.*thumb)[^"\']+)["\']', res.text)
                 if match:
                     src = match.group(1)
@@ -186,7 +177,6 @@ class NPCNewsScraper:
         return None
 
     def run(self):
-        # Ensure storage base exists
         Path(CONFIG["STORAGE_BASE"]).mkdir(parents=True, exist_ok=True)
         
         try:
@@ -218,18 +208,12 @@ class NPCNewsScraper:
                     for data in contest_data:
                         href = data["href"].lower()
                         name_lower = data["name"].lower()
-                        
-                        # Extract the part of the URL after the year to avoid matching the domain (npcnewsonline.com)
                         path_part = href.split(f"/{year}/")[-1] if f"/{year}/" in href else href
-                        
-                        # Filter out non-IFBB organizations (NPC, NPC Worldwide, CPA)
                         exclude_patterns = ["npc", "npcw", "cpa", "npc_worldwide"]
-                        
                         is_non_ifbb = any(p in path_part for p in exclude_patterns) or \
                                       (( "npc" in name_lower or "cpa" in name_lower ) and "ifbb" not in name_lower)
 
-                        if is_non_ifbb:
-                            continue
+                        if is_non_ifbb: continue
 
                         if data["name"] and f"/{year}/" in data["href"] and data["href"] not in seen:
                             seen.add(data["href"])
@@ -240,14 +224,9 @@ class NPCNewsScraper:
                     for contest in unique_targets:
                         c_name = contest["name"]
                         print(f"  Contest: {c_name}")
-
-                        # Track new images saved in THIS contest
                         contest_new_images = 0
-
-                        # --- PRE-FETCH PROCESSED ATHLETES ---
                         processed_set = self.db.get_processed_athletes_for_contest(year, c_name)
 
-                        # Optimization: Navigate directly to the contest URL
                         page.goto(contest["href"], wait_until="domcontentloaded", timeout=30000)
 
                         c_path = page.url.replace("https://contests.npcnewsonline.com", "").rstrip("/")
@@ -276,7 +255,6 @@ class NPCNewsScraper:
                         for data in links_data:
                             raw_href, text, div_name = data["href"], data["text"], data["division"]
                             href_rel = raw_href.replace("https://contests.npcnewsonline.com", "")
-                            
                             if c_path in href_rel and href_rel.rstrip("/") != c_path:
                                 if text.lower() not in ["home", "back", "contests", "divisions"]:
                                     ath_galleries.append({"raw_text": text, "url": raw_href, "division": div_name})
@@ -287,9 +265,7 @@ class NPCNewsScraper:
                             placing, ath_name = self._parse_athlete_name(ath["raw_text"])
                             division = ath["division"]
                             
-                            # --- IDEMPOTENCY CHECK (In Memory) ---
                             if (division, ath_name) in processed_set:
-                                # Log progress without flooding
                                 if (idx_ath + 1) % 100 == 0 or idx_ath == 0 or (idx_ath + 1) == len(ath_galleries):
                                     print(f"      [{idx_ath+1}/{len(ath_galleries)}] Skipping {ath_name} (Already in DB)")
                                 continue
@@ -300,29 +276,39 @@ class NPCNewsScraper:
                                 ath_url = f"https://contests.npcnewsonline.com{ath_url}"
                             
                             target_dir = Path(CONFIG["STORAGE_BASE"]) / year_str
-                            page.goto(ath_url, wait_until="domcontentloaded", timeout=60000)
                             
-                            viewer_links = page.locator("a[href*='images.php']").evaluate_all("""
-                                elements => elements.map(el => el.getAttribute('href'))
-                            """)
+                            all_viewer_links = set()
+                            current_ath_url = ath_url
                             
-                            unique_viewers = list(set([href if href.startswith("http") else f"https://contests.npcnewsonline.com/{href.lstrip('/')}" for href in viewer_links if href]))
+                            while current_ath_url:
+                                page.goto(current_ath_url, wait_until="domcontentloaded", timeout=60000)
+                                page_links = page.locator("a[href*='images.php']").evaluate_all("""
+                                    elements => elements.map(el => el.getAttribute('href'))
+                                """)
+                                for l in page_links:
+                                    if l: all_viewer_links.add(l if l.startswith("http") else f"https://contests.npcnewsonline.com/{l.lstrip('/')}")
+                                
+                                next_page = page.locator("a:has-text('Next')").first
+                                if next_page.is_visible():
+                                    next_href = next_page.get_attribute("href")
+                                    current_ath_url = next_href if next_href.startswith("http") else f"https://contests.npcnewsonline.com/{next_href.lstrip('/')}"
+                                    print(f"      [Pagination] Moving to next page: {current_ath_url}")
+                                else:
+                                    current_ath_url = None
 
-                            # --- PARALLEL IMAGE LINK DISCOVERY ---
+                            unique_viewers = list(all_viewer_links)
                             image_targets = []
                             if unique_viewers:
+                                print(f"      [Discovery] Found {len(unique_viewers)} total image links. discovering high-res URLs...")
                                 with ThreadPoolExecutor(max_workers=CONFIG["MAX_WORKERS"] * 2) as discovery_executor:
-                                    # Use a higher worker count for simple network discovery
                                     results = list(discovery_executor.map(self._find_high_res_src, unique_viewers))
-                                    
                                     c_clean = self._sanitize(c_name)
                                     d_clean = self._sanitize(division)
                                     a_clean = self._sanitize(ath_name)
-                                    
-                                    for idx, high_res_src in enumerate(results):
-                                        if high_res_src:
-                                            filename = f"{year_str}_{c_clean}_{d_clean}_{a_clean}_{idx+1}.jpg"
-                                            image_targets.append((high_res_src, target_dir / filename))
+                                    valid_results = [r for r in results if r]
+                                    for idx, high_res_src in enumerate(valid_results):
+                                        filename = f"{year_str}_{c_clean}_{d_clean}_{a_clean}_{idx+1}.jpg"
+                                        image_targets.append((high_res_src, target_dir / filename))
 
                             successful_images = 0
                             if image_targets:
@@ -341,14 +327,12 @@ class NPCNewsScraper:
                             if self._get_storage_size_gb() >= CONFIG["DISK_LIMIT_GB"]:
                                 self._async_upload_and_cleanup(year, backup_db=True)
 
-                        # Upload images for the year but don't force DB backup every contest unless disk is full
                         if contest_new_images > 0:
                             self._async_upload_and_cleanup(year, backup_db=False)
 
                 browser.close()
         finally:
-            print("\n[Shutdown] Performing final database backup and waiting for background uploads...")
-            self._upload_and_cleanup(backup_db=True) # Final synchronous cleanup
+            print("\n[Shutdown] Waiting for background uploads to complete...")
             self.upload_executor.shutdown(wait=True)
             self.db.close()
 
@@ -356,6 +340,5 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--year", type=int, help="Specific year to scrape")
     args = parser.parse_args()
-
     scraper = NPCNewsScraper([args.year] if args.year else list(range(2013, 2027)))
     scraper.run()

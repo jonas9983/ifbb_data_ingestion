@@ -23,15 +23,15 @@ def upload_to_drive(source_path: str, remote_destination: str, delete_after: boo
 
     try:
         # Run the rclone command with optimized flags for speed and reduced verbosity
-        # Reducing transfers and checkers to avoid saturating bandwidth/CPU during async runs
+        # --progress allows the user to see the status during long moves
         rclone_cmd = [
             "rclone", command, source_path, remote_destination, 
             "--transfers", "4", 
             "--checkers", "8", 
             "--drive-chunk-size", "64M",
             "--fast-list",
-            "--stats", "30s",
-            "--stats-one-line"
+            "--progress",
+            "--stats", "15s"
         ]
         subprocess.run(rclone_cmd, check=True)
         print(f"\n {command.capitalize()} successfully completed!")
