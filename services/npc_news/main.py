@@ -21,8 +21,8 @@ CONFIG = {
     "STORAGE_BASE": "data/npc_news",
     "GDRIVE_REMOTE": "gdrive:personal/Bodybuilding_Dataset",
     "DISK_LIMIT_GB": 20,
-    "MAX_WORKERS": 2, # Reduced to prevent rate-limiting and server crashes
-    "DB_NAME": "npc_data_2013_fw.db"
+    "MAX_WORKERS": 2,
+    "DB_NAME": "npc_database.db"
 }
 
 class NPCNewsScraper:
@@ -45,7 +45,6 @@ class NPCNewsScraper:
 
         # 3. Async Upload State
         self.upload_executor = ThreadPoolExecutor(max_workers=1)
-        self._upload_queued = False
         self._upload_lock = threading.Lock()
 
         # 4. Storage Tracking
@@ -72,44 +71,34 @@ class NPCNewsScraper:
         """Returns total size of STORAGE_BASE in GB using tracked value."""
         return self.total_size_bytes / (1024**3)
 
-    def _upload_and_cleanup(self, year: int = None, backup_db: bool = False):
-        """Uploads STORAGE_BASE and optionally backs up Database to Drive."""
-        year_label = str(year) if year else "all"
+    def _upload_and_cleanup_contest(self, year: int, contest_name: str, contest_dir: Path, backup_db: bool = False):
+        """Zips the contest directory, uploads to Drive, and cleans up."""
         timestamp = time.strftime("%H:%M:%S")
-        print(f"\n[{timestamp}] [Background Task] Syncing batch for Year: {year_label}...")
+        c_clean = self._sanitize(contest_name)
+        zip_path = Path("data/upload_staging") / f"{year}_{c_clean}.zip"
+        zip_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # 1. Staging: Move files to a separate directory to avoid conflicts with active scraper
-        staging_id = f"{int(time.time())}_{year_label}"
-        staging_base = Path("data/upload_staging") / staging_id
-        staging_base.mkdir(parents=True, exist_ok=True)
+        print(f"\n[{timestamp}] [Background Task] Zipping and syncing contest: {contest_name} ({year})...")
         
-        has_files = False
-        if year:
-            source_path = Path(CONFIG["STORAGE_BASE"]) / str(year)
-            if source_path.exists() and any(source_path.iterdir()):
-                target_staging = staging_base / str(year)
-                try:
-                    source_path.rename(target_staging)
-                    has_files = True
-                except Exception as e:
-                    print(f"  [Error] Failed to stage files for {year}: {e}")
-        else:
-            if Path(CONFIG["STORAGE_BASE"]).exists():
-                for item in Path(CONFIG["STORAGE_BASE"]).iterdir():
-                    if item.is_dir() and any(item.iterdir()):
-                        item.rename(staging_base / item.name)
-                        has_files = True
-
-        # 2. Upload the Staged snapshot
-        if has_files:
-            print(f"  [{timestamp}] [Sync] Uploading staged batch to Drive...")
-            upload_to_drive(str(staging_base), CONFIG["GDRIVE_REMOTE"], delete_after=True)
-            if staging_base.exists():
-                try: shutil.rmtree(staging_base)
+        # 1. Zip the contest directory
+        if contest_dir.exists() and any(contest_dir.iterdir()):
+            shutil.make_archive(str(zip_path.with_suffix('')), 'zip', str(contest_dir))
+            
+            # 2. Upload the zip to Drive into a year-specific folder
+            remote_dest = f"{CONFIG['GDRIVE_REMOTE']}/{year}"
+            print(f"  [{timestamp}] [Sync] Uploading {zip_path.name} to Drive...")
+            upload_to_drive(str(zip_path), remote_dest, delete_after=True)
+            
+            # Clean up the local contest directory
+            try:
+                shutil.rmtree(contest_dir)
+            except Exception as e:
+                print(f"  [Error] Failed to remove local contest dir {contest_dir}: {e}")
+            
+            # Clean up the local zip if delete_after didn't get it (or if it's left behind)
+            if zip_path.exists():
+                try: zip_path.unlink()
                 except: pass
-        else:
-            try: staging_base.rmdir()
-            except: pass
 
         # 3. Backup the database (Only if requested or major sync)
         if backup_db:
@@ -128,9 +117,10 @@ class NPCNewsScraper:
                     if backup_file.exists():
                         backup_file.unlink()
 
-        Path(CONFIG["STORAGE_BASE"]).mkdir(parents=True, exist_ok=True)
-        self.total_size_bytes = self._calculate_initial_size()
-        print(f"[{time.strftime('%H:%M:%S')}] [Background Task] Sync for {year_label} completed.\n")
+        with self._upload_lock:
+            self.total_size_bytes = self._calculate_initial_size()
+            
+        print(f"[{time.strftime('%H:%M:%S')}] [Background Task] Sync for {contest_name} completed.\n")
 
     def _download_task(self, url: str, path: Path, year, contest, division, placing, athlete):
         """Pure binary download task for the thread pool."""
@@ -156,19 +146,10 @@ class NPCNewsScraper:
         except: pass
         return 0
 
-    def _async_upload_and_cleanup(self, year: int = None, backup_db: bool = False):
-        """Queues an upload task if one isn't already queued."""
-        with self._upload_lock:
-            if self._upload_queued:
-                return
-            self._upload_queued = True
-        
+    def _async_upload_and_cleanup_contest(self, year: int, contest_name: str, contest_dir: Path, backup_db: bool = False):
+        """Queues an upload task for a contest."""
         def task_wrapper():
-            try:
-                self._upload_and_cleanup(year, backup_db=backup_db)
-            finally:
-                with self._upload_lock:
-                    self._upload_queued = False
+            self._upload_and_cleanup_contest(year, contest_name, contest_dir, backup_db=backup_db)
         
         self.upload_executor.submit(task_wrapper)
 
@@ -248,6 +229,9 @@ class NPCNewsScraper:
 
                     for contest in unique_targets:
                         c_name = contest["name"]
+                        c_clean = self._sanitize(c_name)
+                        target_dir = Path(CONFIG["STORAGE_BASE"]) / year_str / c_clean
+
                         print(f"  Contest: {c_name}")
                         contest_new_images = 0
                         processed_set = self.db.get_processed_athletes_for_contest(year, c_name)
@@ -304,8 +288,6 @@ class NPCNewsScraper:
                             if not ath_url.startswith("http"):
                                 ath_url = f"https://contests.npcnewsonline.com{ath_url}"
                             
-                            target_dir = Path(CONFIG["STORAGE_BASE"]) / year_str
-                            
                             # --- PAGINATION & LINK DISCOVERY ---
                             all_viewer_links = set()
                             current_ath_url = ath_url
@@ -333,7 +315,6 @@ class NPCNewsScraper:
                             if unique_viewers:
                                 with ThreadPoolExecutor(max_workers=CONFIG["MAX_WORKERS"] * 2) as discovery_executor:
                                     results = list(discovery_executor.map(self._find_high_res_src, unique_viewers))
-                                    c_clean = self._sanitize(c_name)
                                     d_clean = self._sanitize(division)
                                     a_clean = self._sanitize(ath_name)
                                     valid_results = [r for r in results if r]
@@ -356,10 +337,12 @@ class NPCNewsScraper:
                                 print(f"      Athlete: {ath_name} [{division}] -> No images found.")
 
                             if self._get_storage_size_gb() >= CONFIG["DISK_LIMIT_GB"]:
-                                self._async_upload_and_cleanup(year, backup_db=True)
+                                # Queue up whatever is done, though since we upload per contest, 
+                                # if a single contest breaches it we could upload mid-contest but let's wait until contest finishes
+                                pass
 
                         if contest_new_images > 0:
-                            self._async_upload_and_cleanup(year, backup_db=False)
+                            self._async_upload_and_cleanup_contest(year, c_name, target_dir, backup_db=False)
 
                 browser.close()
         finally:
@@ -371,5 +354,5 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--year", type=int, help="Specific year to scrape")
     args = parser.parse_args()
-    scraper = NPCNewsScraper([args.year] if args.year else list(range(2013, 2027)))
+    scraper = NPCNewsScraper([args.year] if args.year else list(range(2026, 2014, -1)))
     scraper.run()
