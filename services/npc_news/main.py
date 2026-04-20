@@ -227,7 +227,7 @@ class NPCNewsScraper:
 
                     print(f"Found {len(unique_targets)} contests.")
 
-                    for contest in unique_targets:
+                    for idx_c, contest in enumerate(unique_targets):
                         c_name = contest["name"]
                         c_clean = self._sanitize(c_name)
                         target_dir = Path(CONFIG["STORAGE_BASE"]) / year_str / c_clean
@@ -337,12 +337,12 @@ class NPCNewsScraper:
                                 print(f"      Athlete: {ath_name} [{division}] -> No images found.")
 
                             if self._get_storage_size_gb() >= CONFIG["DISK_LIMIT_GB"]:
-                                # Queue up whatever is done, though since we upload per contest, 
-                                # if a single contest breaches it we could upload mid-contest but let's wait until contest finishes
                                 pass
 
-                        if contest_new_images > 0:
-                            self._async_upload_and_cleanup_contest(year, c_name, target_dir, backup_db=False)
+                        # Backup DB every 5 contests or if it's the last contest of the year
+                        should_backup = (idx_c + 1) % 5 == 0 or (idx_c + 1) == len(unique_targets)
+                        if contest_new_images > 0 or should_backup:
+                            self._async_upload_and_cleanup_contest(year, c_name, target_dir, backup_db=should_backup)
 
                 browser.close()
         finally:
