@@ -177,12 +177,20 @@ class NPCNewsScraper:
         try:
             res = self.img_session.get(v_url, timeout=10)
             if res.status_code == 200:
-                match = re.search(r'src=["\']([^"\']+/images/contests/(?!.*thumb)[^"\']+)["\']', res.text)
-                if match:
-                    src = match.group(1)
-                    if not src.startswith("http"):
-                        src = f"https://contests.npcnewsonline.com{src}"
-                    return src
+                # Optimized regex: look for ANY .jpg inside src that isn't a thumb
+                # This is more robust for Awards pages
+                patterns = [
+                    r'src=["\']([^"\']+/images/contests/(?!.*thumb)[^"\']+\.jpg)["\']',
+                    r'src=["\']([^"\']+/images/contests/[^"\']+\.jpg)["\']' # Fallback
+                ]
+                for p in patterns:
+                    match = re.search(p, res.text, re.IGNORECASE)
+                    if match:
+                        src = match.group(1)
+                        if "thumb" in src.lower() and len(patterns) > 1: continue
+                        if not src.startswith("http"):
+                            src = f"https://contests.npcnewsonline.com{src}"
+                        return src
         except: pass
         return None
 
@@ -197,14 +205,21 @@ class NPCNewsScraper:
                 page = context.new_page()
                 
                 print("Warming up session...")
-                page.goto("https://contests.npcnewsonline.com/", wait_until="domcontentloaded", timeout=60000)
+                try:
+                    page.goto("https://contests.npcnewsonline.com/", wait_until="domcontentloaded", timeout=60000)
+                except Exception as e:
+                    print(f"  [Warning] Warmup navigation timeout: {e}. Proceeding anyway...")
 
                 for year in self.years:
                     year_str = str(year)
                     print(f"\n--- Processing Year: {year_str} ---")
                     
                     year_url = f"{CONFIG['BASE_URL']}{year}/"
-                    page.goto(year_url, wait_until="domcontentloaded", timeout=60000)
+                    try:
+                        page.goto(year_url, wait_until="domcontentloaded", timeout=60000)
+                    except:
+                        print(f"  [Error] Timeout loading year {year}. Skipping...")
+                        continue
                     
                     contest_data = page.locator(".td-pb-span8.td-main-content a[href*='/contests/20']").evaluate_all("""
                         elements => elements.map(el => ({
@@ -237,7 +252,11 @@ class NPCNewsScraper:
                         contest_new_images = 0
                         processed_set = self.db.get_processed_athletes_for_contest(year, c_name)
 
-                        page.goto(contest["href"], wait_until="domcontentloaded", timeout=30000)
+                        try:
+                            page.goto(contest["href"], wait_until="domcontentloaded", timeout=30000)
+                        except:
+                            print(f"    [Error] Timeout loading contest {c_name}. Skipping...")
+                            continue
 
                         c_path = page.url.replace("https://contests.npcnewsonline.com", "").rstrip("/")
                         links_data = page.evaluate("""() => {
@@ -287,29 +306,31 @@ class NPCNewsScraper:
                             
                             target_dir = Path(CONFIG["STORAGE_BASE"]) / year_str
                             
+                            # --- PAGINATION & LINK DISCOVERY ---
                             all_viewer_links = set()
                             current_ath_url = ath_url
                             
-                            while current_ath_url:
-                                page.goto(current_ath_url, wait_until="domcontentloaded", timeout=60000)
-                                page_links = page.locator("a[href*='images.php']").evaluate_all("""
-                                    elements => elements.map(el => el.getAttribute('href'))
-                                """)
-                                for l in page_links:
-                                    if l: all_viewer_links.add(l if l.startswith("http") else f"https://contests.npcnewsonline.com/{l.lstrip('/')}")
-                                
-                                next_page = page.locator("a:has-text('Next')").first
-                                if next_page.is_visible():
-                                    next_href = next_page.get_attribute("href")
-                                    current_ath_url = next_href if next_href.startswith("http") else f"https://contests.npcnewsonline.com/{next_href.lstrip('/')}"
-                                    print(f"      [Pagination] Moving to next page: {current_ath_url}")
-                                else:
-                                    current_ath_url = None
+                            try:
+                                while current_ath_url:
+                                    page.goto(current_ath_url, wait_until="domcontentloaded", timeout=60000)
+                                    page_links = page.locator("a[href*='images.php']").evaluate_all("""
+                                        elements => elements.map(el => el.getAttribute('href'))
+                                    """)
+                                    for l in page_links:
+                                        if l: all_viewer_links.add(l if l.startswith("http") else f"https://contests.npcnewsonline.com/{l.lstrip('/')}")
+                                    
+                                    next_page = page.locator("a:has-text('Next')").first
+                                    if next_page.is_visible():
+                                        next_href = next_page.get_attribute("href")
+                                        current_ath_url = next_href if next_href.startswith("http") else f"https://contests.npcnewsonline.com/{next_href.lstrip('/')}"
+                                    else:
+                                        current_ath_url = None
+                            except Exception as e:
+                                print(f"      [Warning] Navigation issue for {ath_name}: {e}. Proceeding with found links...")
 
                             unique_viewers = list(all_viewer_links)
                             image_targets = []
                             if unique_viewers:
-                                print(f"      [Discovery] Found {len(unique_viewers)} total image links. discovering high-res URLs...")
                                 with ThreadPoolExecutor(max_workers=CONFIG["MAX_WORKERS"] * 2) as discovery_executor:
                                     results = list(discovery_executor.map(self._find_high_res_src, unique_viewers))
                                     c_clean = self._sanitize(c_name)
