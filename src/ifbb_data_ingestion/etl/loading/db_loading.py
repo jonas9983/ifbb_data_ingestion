@@ -8,6 +8,8 @@ class DatabaseManager:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         # Use check_same_thread=False to allow multi-threaded access with our own lock
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        # Enable WAL mode for better concurrency
+        self.conn.execute("PRAGMA journal_mode=WAL;")
         self.cursor = self.conn.cursor()
         self.lock = threading.Lock()
         self._create_tables()
@@ -42,6 +44,15 @@ class DatabaseManager:
             ''', (year, contest))
             return set(self.cursor.fetchall())
 
+    def is_contest_exists(self, year, contest):
+        """Returns True if the contest already has at least one athlete in the DB."""
+        with self.lock:
+            self.cursor.execute('''
+                SELECT 1 FROM athletes 
+                WHERE year = ? AND contest_name = ? LIMIT 1
+            ''', (year, contest))
+            return self.cursor.fetchone() is not None
+
     def insert_record(self, year, contest, division, placing, athlete, filename, commit=True):
         with self.lock:
             try:
@@ -65,6 +76,14 @@ class DatabaseManager:
     def commit(self):
         with self.lock:
             self.conn.commit()
+
+    def backup(self, backup_path: str):
+        """Creates a safe backup of the database while it is potentially being accessed."""
+        with self.lock:
+            backup_conn = sqlite3.connect(backup_path)
+            with backup_conn:
+                self.conn.backup(backup_conn)
+            backup_conn.close()
 
     def close(self):
         with self.lock:

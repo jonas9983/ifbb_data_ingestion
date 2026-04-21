@@ -1,4 +1,4 @@
-import src.etl.extraction.wayback_machine_extraction as wayback_machine_extraction
+import ifbb_data_ingestion.etl.extraction.wayback_machine_extraction as wayback_machine_extraction
 
 import os
 from urllib.request import urlretrieve

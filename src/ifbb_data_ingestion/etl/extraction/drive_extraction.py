@@ -1,6 +1,8 @@
 import os
 import subprocess
 import argparse
+import zipfile
+import shutil
 from pathlib import Path
 
 def download_from_drive(remote_path: str, local_destination: str):
@@ -50,10 +52,38 @@ def download_from_drive(remote_path: str, local_destination: str):
         print(f"\n\n Download cancelled by user.")
         return False
 
+def fetch_and_extract_zip(remote_zip_path: str, local_extract_dir: str):
+    """
+    Downloads a ZIP from Drive and extracts it.
+    
+    Args:
+        remote_zip_path (str): Rclone path to ZIP
+        local_extract_dir (str): Directory to extract into
+    """
+    local_zip = Path("data/tmp_download.zip")
+    local_zip.parent.mkdir(parents=True, exist_ok=True)
+    
+    if download_from_drive(remote_zip_path, str(local_zip)):
+        print(f" Extracting {local_zip} to {local_extract_dir}...")
+        try:
+            with zipfile.ZipFile(local_zip, 'r') as zip_ref:
+                zip_ref.extractall(local_extract_dir)
+            local_zip.unlink()
+            print(" Extraction complete.")
+            return True
+        except Exception as e:
+            print(f" Extraction failed: {e}")
+            return False
+    return False
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Download files from Google Drive using Rclone.")
     parser.add_argument("--remote", type=str, required=True, help="Remote source path")
     parser.add_argument("--local", type=str, required=True, help="Local destination path")
+    parser.add_argument("--extract", action="store_true", help="Extract if it's a ZIP")
     args = parser.parse_args()
 
-    download_from_drive(args.remote, args.local)
+    if args.extract:
+        fetch_and_extract_zip(args.remote, args.local)
+    else:
+        download_from_drive(args.remote, args.local)

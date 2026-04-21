@@ -16,32 +16,36 @@ def upload_to_drive(source_path: str, remote_destination: str, delete_after: boo
         print(f" Error: The source path '{source_path}' does not exist.")
         return
 
-    command = "move" if delete_after else "copy"
+    command = "moveto" if delete_after else "copyto"
     print(f" Starting Rclone {command.capitalize()}")
     print(f" Source: {source_path}")
     print(f" Destination: {remote_destination}")
 
     try:
         # Run the rclone command with optimized flags for speed and reduced verbosity
+        # --progress allows the user to see the status during long moves
         rclone_cmd = [
             "rclone", command, source_path, remote_destination, 
-            "--transfers", "16", 
-            "--checkers", "32", 
+            "--transfers", "4", 
+            "--checkers", "8", 
             "--drive-chunk-size", "64M",
             "--fast-list",
-            "--stats", "30s",
-            "--stats-one-line"
+            "--progress",
+            "--stats", "15s"
         ]
         subprocess.run(rclone_cmd, check=True)
         print(f"\n {command.capitalize()} successfully completed!")
+        return True
         
     except subprocess.CalledProcessError as e:
         print(f"\n {command.capitalize()} failed. Rclone encountered an error: {e}")
+        return False
     except FileNotFoundError:
         print("\n Rclone is not installed or not in your system's PATH.")
-        print("Please install it using: curl https://rclone.org/install.sh | sudo bash")
-    except KeyboardInterrupt:
-        print(f"\n\n {command.capitalize()} cancelled by user.")
+        return False
+    except Exception as e:
+        print(f"\n An unexpected error occurred: {e}")
+        return False
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Upload local directories to Google Drive using Rclone.")

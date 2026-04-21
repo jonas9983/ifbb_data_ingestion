@@ -10,7 +10,7 @@ import argparse
 from typing import Dict, Any
 from insightface.app import FaceAnalysis
 
-from src.etl.extraction.apify_extraction import InstagramScraper, BillingGuard, APIFY_API_TOKEN
+from ifbb_data_ingestion.etl.extraction.apify_extraction import InstagramScraper, BillingGuard, APIFY_API_TOKEN
 
 class SingleFaceFilter:
     """Filters images to find the highest quality single-face shots."""
