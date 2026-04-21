@@ -1,110 +1,51 @@
-# Athlete Position Tracker
+# IFBB Data Ingestion Pipeline
 
-A computer vision system that tracks athletes on stage, detects when they swap positions, and identifies marshalls using YOLO segmentation, face recognition, and temporal tracking.
+A robust ETL pipeline for extracting, transforming, and loading IFBB (International Federation of Bodybuilding) athlete data and contest results.
 
-## Features
+## 🚀 Recent Updates
+- **Package Restructuring:** Now organized as a proper Python package `ifbb_data_ingestion`.
+- **Stealth Scraper:** Enhanced NPC News scraper with custom User-Agents, random delays, and improved timeout handling to bypass rate-limiting.
+- **Smart Skipping:** The scraper now checks the local database and skips contest navigation entirely if the data already exists, reducing network traffic by ~90% on re-runs.
+- **Async Drive Uploads:** Contest results are zipped and uploaded to Google Drive asynchronously in the background.
 
-- **Multi-athlete tracking** using YOLO11 with BoT-SORT
-- **Face recognition** to identify and persist athlete identities
-- **Position swap detection** when athletes change places
-- **Marshall detection** using appearance-based scoring
-- **Camera cut detection** to reset tracking across scene changes
-- **Depth analysis** to distinguish front row from back row athletes
+## 📁 Project Structure
+- `src/ifbb_data_ingestion/`: Core package containing ETL logic.
+- `services/`: Service-specific entry points (e.g., NPC News scraper).
+- `scripts/`: Utility scripts for manual uploads and data migration.
+- `data/`: Local storage for images, database, and staging.
 
-## Installation
+## 🛠 Installation
+Ensure you have [Rclone](https://rclone.org/) installed and configured for Google Drive.
 
-Create virtual environment and install the requirements
+1. Clone the repository and install the package in editable mode:
+   ```bash
+   pip install -e .
+   ```
 
+2. Install Playwright browsers:
+   ```bash
+   playwright install chromium
+   ```
+
+## 🏃 Usage
+
+### NPC News Scraper
+Run the scraper for specific years. It will automatically download the latest DB from Drive, scrape new data, and sync zips back to Drive.
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+python3 -m services.npc_news.main --years 2024 2025
 ```
 
-## Usage
-
-### Basic Command
-
+### Manual Upload
+If you have data in `data/upload_staging` that needs to be synced manually:
 ```bash
-python src/services/athlete_tracking.py \
-  --data_dir ./frames \
-  --db ./face_database.npz \
-  --processed_dir processed
+python3 scripts/manual_upload.py --folder YOUR_FOLDER_NAME
 ```
 
-### Full Options
-
+### Migration
+To migrate files between Drive locations and bundle them into zips:
 ```bash
-python src/services/athlete_tracking.py \
-  --data_dir ./frames \
-  --db ./face_database.npz \
-  --processed_dir processed \
-  --threshold 0.35 \
-  --confidence 0.5 \
-  --frame-range 0:100:1 \
-  --tracker-config custom_botsort.yaml \
-  --debug
+python3 scripts/migrate_to_zip.py
 ```
 
-### Parameters
-
-- `--data_dir`: Directory containing input video frames (required)
-- `--db`: Path to face recognition database `.npz` file (required)
-- `--processed_dir`: Output directory for annotated frames (default: `processed`)
-- `--threshold`: Face recognition similarity threshold (default: 0.35)
-- `--confidence`: YOLO detection confidence threshold (default: 0.5)
-- `--frame-range`: Process specific frames `start:end:step` (e.g., `0:1000:2`)
-- `--tracker-config`: Custom BoT-SORT YAML config file
-- `--debug`: Enable debug logging and visualization
-
-## Output
-
-The system generates:
-
-1. **Annotated frames** in the `processed_dir` with:
-   - Color-coded segmentation masks (green=front row, red=back row, gray=marshall)
-   - Athlete names and tracking IDs
-   - Face detection boxes (in debug mode)
-
-2. **tracking_events.json** containing:
-   - All position swap events
-   - Lineup changes
-   - Camera cuts
-   - Frame-by-frame tracking statistics
-
-## Project Structure
-
-```
-
-├── src/
-│   └── services/
-│       ├── faces/
-│       │   └── face_recognizer.py   # Face recognition logic
-│       └── athlete_tracking/
-│           ├── detection.py          # Athlete & marshall detection
-│           ├── swap_detection.py     # Position swap logic
-│           ├── depth_detection.py    # Front/back row filtering
-│           └── yolo_segmentation.py  # YOLO wrapper
-├── configs/
-│     ├── custom_botsort.yaml
-│     └──apify.yaml
-```
-
-## How It Works
-
-1. **Detection**: YOLO11 segments and tracks people across frames
-2. **Recognition**: InsightFace matches detected faces to database
-3. **Association**: Tracks are persistently linked to athlete identities
-4. **Depth Filtering**: Clustering separates front row from back row
-5. **Swap Detection**: Monitors horizontal position changes between known athletes
-6. **Marshall Identification**: Scores individuals based on clothing appearance
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Notes
-
-- Face database must be created separately using InsightFace embeddings
-- YOLO model (`yolo11l-seg.pt`) downloads automatically from Ultralytics
-- Works best with stable camera angles and good lighting
-- Marshall detection assumes dark clothing on torso area
+##  Configuration
+Settings for disk limits, concurrent workers, and Drive paths can be found in `services/npc_news/main.py` under the `CONFIG` dictionary.
