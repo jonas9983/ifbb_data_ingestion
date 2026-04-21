@@ -1,4 +1,4 @@
-import src.etl.supabase_config as supabase_config
+import ifbb_data_ingestion.etl.supabase_config as supabase_config
 
 supabase = supabase_config.retrieve_supabase_client()
 

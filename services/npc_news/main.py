@@ -11,9 +11,9 @@ from typing import List
 from concurrent.futures import ThreadPoolExecutor
 from playwright.sync_api import sync_playwright
 
-from src.etl.loading.drive_loading import upload_to_drive
-from src.etl.extraction.drive_extraction import download_from_drive
-from src.etl.loading.db_loading import DatabaseManager
+from ifbb_data_ingestion.etl.loading.drive_loading import upload_to_drive
+from ifbb_data_ingestion.etl.extraction.drive_extraction import download_from_drive
+from ifbb_data_ingestion.etl.loading.db_loading import DatabaseManager
 
 # --- CONFIGURATION ---
 CONFIG = {

@@ -2,7 +2,7 @@ import os
 import argparse
 import subprocess
 from pathlib import Path
-from src.etl.loading.drive_loading import upload_to_drive
+from ifbb_data_ingestion.etl.loading.drive_loading import upload_to_drive
 
 def download_youtube_video(url: str, output_dir: Path):
     """
