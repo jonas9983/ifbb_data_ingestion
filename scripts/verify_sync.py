@@ -15,7 +15,13 @@ def get_remote_zips(year):
             capture_output=True, text=True, check=True
         )
         return [f.strip() for f in result.stdout.splitlines() if f.endswith(".zip")]
-    except:
+    except subprocess.CalledProcessError as e:
+        print(f"  [Warning] Could not list remote directory for {year}: {e}")
+        return []
+    except KeyboardInterrupt:
+        raise
+    except Exception as e:
+        print(f"  [Error] Unexpected error: {e}")
         return []
 
 def verify_data():
