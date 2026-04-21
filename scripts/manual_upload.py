@@ -1,6 +1,6 @@
 import argparse
 from pathlib import Path
-from src.etl.loading.drive_loading import upload_to_drive
+from ifbb_data_ingestion.etl.loading.drive_loading import upload_to_drive
 
 def trigger_upload(staging_dir_name="1776657595_all", remote="gdrive:personal/Bodybuilding_Dataset"):
     staging_path = Path("data/upload_staging") / staging_dir_name
