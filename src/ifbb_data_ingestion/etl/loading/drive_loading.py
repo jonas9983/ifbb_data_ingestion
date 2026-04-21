@@ -35,14 +35,17 @@ def upload_to_drive(source_path: str, remote_destination: str, delete_after: boo
         ]
         subprocess.run(rclone_cmd, check=True)
         print(f"\n {command.capitalize()} successfully completed!")
+        return True
         
     except subprocess.CalledProcessError as e:
         print(f"\n {command.capitalize()} failed. Rclone encountered an error: {e}")
+        return False
     except FileNotFoundError:
         print("\n Rclone is not installed or not in your system's PATH.")
-        print("Please install it using: curl https://rclone.org/install.sh | sudo bash")
-    except KeyboardInterrupt:
-        print(f"\n\n {command.capitalize()} cancelled by user.")
+        return False
+    except Exception as e:
+        print(f"\n An unexpected error occurred: {e}")
+        return False
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Upload local directories to Google Drive using Rclone.")

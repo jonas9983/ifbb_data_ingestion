@@ -83,20 +83,24 @@ class NPCNewsScraper:
             shutil.make_archive(str(zip_path.with_suffix('')), 'zip', str(contest_dir))
             
             # 2. Upload the zip to Drive into a year-specific folder
-            remote_dest = f"{CONFIG['GDRIVE_REMOTE']}/{year}"
+            # For 'moveto' to work with a file source, the destination must include the filename
+            remote_dest = f"{CONFIG['GDRIVE_REMOTE']}/{year}/{zip_path.name}"
             print(f"  [{timestamp}] [Sync] Uploading {zip_path.name} to Drive...")
-            upload_to_drive(str(zip_path), remote_dest, delete_after=True)
+            success = upload_to_drive(str(zip_path), remote_dest, delete_after=True)
             
-            # Clean up the local contest directory
-            try:
-                shutil.rmtree(contest_dir)
-            except Exception as e:
-                print(f"  [Error] Failed to remove local contest dir {contest_dir}: {e}")
+            # 3. Clean up the local contest directory ONLY if zip was created
+            if zip_path.exists() or success:
+                try:
+                    shutil.rmtree(contest_dir)
+                except Exception as e:
+                    print(f"  [Error] Failed to remove local contest dir {contest_dir}: {e}")
             
-            # Clean up the local zip if delete_after didn't get it (or if it's left behind)
-            if zip_path.exists():
+            # Clean up the local zip ONLY if upload succeeded
+            if success and zip_path.exists():
                 try: zip_path.unlink()
                 except: pass
+            elif not success:
+                print(f"  [CRITICAL] Upload failed for {zip_path.name}. Keeping local zip for manual retry.")
 
         # 3. Backup the database (Only if requested or major sync)
         if backup_db:
