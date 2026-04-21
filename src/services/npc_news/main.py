@@ -115,8 +115,18 @@ class NPCNewsScraper:
         if backup_db:
             db_file = Path(f"data/{CONFIG['DB_NAME']}")
             if db_file.exists():
-                print(f"  [{timestamp}] [Backup] Backing up database to Drive...")
-                upload_to_drive(str(db_file), CONFIG["GDRIVE_REMOTE"])
+                print(f"  [{timestamp}] [Backup] Creating safe database snapshot...")
+                backup_file = db_file.with_suffix(".db.tmp")
+                try:
+                    self.db.backup(str(backup_file))
+                    print(f"  [{timestamp}] [Backup] Uploading database snapshot to Drive...")
+                    # Upload with the original name to Drive
+                    upload_to_drive(str(backup_file), f"{CONFIG['GDRIVE_REMOTE']}/{CONFIG['DB_NAME']}")
+                except Exception as e:
+                    print(f"  [Error] Failed to backup database: {e}")
+                finally:
+                    if backup_file.exists():
+                        backup_file.unlink()
 
         Path(CONFIG["STORAGE_BASE"]).mkdir(parents=True, exist_ok=True)
         self.total_size_bytes = self._calculate_initial_size()
