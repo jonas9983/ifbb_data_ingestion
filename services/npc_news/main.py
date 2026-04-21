@@ -179,8 +179,16 @@ class NPCNewsScraper:
         try:
             with sync_playwright() as p:
                 print("Launching browser with stealth settings...")
-                browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
-                context = browser.new_context(viewport={'width': 1280, 'height': 800})
+                user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                browser = p.chromium.launch(headless=True, args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    f"--user-agent={user_agent}"
+                ])
+                context = browser.new_context(
+                    viewport={'width': 1280, 'height': 800},
+                    user_agent=user_agent
+                )
                 page = context.new_page()
                 
                 print("Warming up session...")
@@ -227,6 +235,11 @@ class NPCNewsScraper:
 
                     for idx_c, contest in enumerate(unique_targets):
                         c_name = contest["name"]
+                        
+                        if self.db.is_contest_exists(year, c_name):
+                            print(f"  Contest: {c_name} (Already in DB, skipping navigation)")
+                            continue
+
                         c_clean = self._sanitize(c_name)
                         target_dir = Path(CONFIG["STORAGE_BASE"]) / year_str / c_clean
 
@@ -234,8 +247,11 @@ class NPCNewsScraper:
                         contest_new_images = 0
                         processed_set = self.db.get_processed_athletes_for_contest(year, c_name)
 
+                        # Add small random delay to avoid rate limiting
+                        time.sleep(random.uniform(1.0, 3.0))
+
                         try:
-                            page.goto(contest["href"], wait_until="domcontentloaded", timeout=30000)
+                            page.goto(contest["href"], wait_until="domcontentloaded", timeout=60000)
                         except:
                             print(f"    [Error] Timeout loading contest {c_name}. Skipping...")
                             continue

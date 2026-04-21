@@ -42,6 +42,15 @@ class DatabaseManager:
             ''', (year, contest))
             return set(self.cursor.fetchall())
 
+    def is_contest_exists(self, year, contest):
+        """Returns True if the contest already has at least one athlete in the DB."""
+        with self.lock:
+            self.cursor.execute('''
+                SELECT 1 FROM athletes 
+                WHERE year = ? AND contest_name = ? LIMIT 1
+            ''', (year, contest))
+            return self.cursor.fetchone() is not None
+
     def insert_record(self, year, contest, division, placing, athlete, filename, commit=True):
         with self.lock:
             try:

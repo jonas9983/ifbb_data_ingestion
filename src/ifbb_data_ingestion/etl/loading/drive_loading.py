@@ -16,7 +16,7 @@ def upload_to_drive(source_path: str, remote_destination: str, delete_after: boo
         print(f" Error: The source path '{source_path}' does not exist.")
         return
 
-    command = "move" if delete_after else "copy"
+    command = "moveto" if delete_after else "copyto"
     print(f" Starting Rclone {command.capitalize()}")
     print(f" Source: {source_path}")
     print(f" Destination: {remote_destination}")
