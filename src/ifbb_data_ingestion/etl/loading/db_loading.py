@@ -8,6 +8,8 @@ class DatabaseManager:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         # Use check_same_thread=False to allow multi-threaded access with our own lock
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        # Enable WAL mode for better concurrency
+        self.conn.execute("PRAGMA journal_mode=WAL;")
         self.cursor = self.conn.cursor()
         self.lock = threading.Lock()
         self._create_tables()

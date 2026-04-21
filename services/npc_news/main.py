@@ -26,6 +26,7 @@ CONFIG = {
 class NPCNewsScraper:
     def __init__(self, years: List[int]):
         self.years = years
+        self.contest_count = 0
         
         # 1. Try to download the latest database from Drive before starting
         db_path = f"data/{CONFIG['DB_NAME']}"
@@ -357,13 +358,27 @@ class NPCNewsScraper:
                             if self._get_storage_size_gb() >= CONFIG["DISK_LIMIT_GB"]:
                                 pass
 
-                        # Backup DB every 5 contests or if it's the last contest of the year
-                        should_backup = (idx_c + 1) % 5 == 0 or (idx_c + 1) == len(unique_targets)
-                        if contest_new_images > 0 or should_backup:
-                            self._async_upload_and_cleanup_contest(year, c_name, target_dir, backup_db=should_backup)
+                        # Only sync the contest images in the background
+                        if contest_new_images > 0:
+                            self._async_upload_and_cleanup_contest(year, c_name, target_dir, backup_db=False)
 
                 browser.close()
         finally:
+            print("\n[Shutdown] Performing final database backup...")
+            db_file = Path(f"data/{CONFIG['DB_NAME']}")
+            if db_file.exists():
+                timestamp = time.strftime("%H:%M:%S")
+                backup_file = db_file.with_suffix(".db.tmp")
+                try:
+                    self.db.backup(str(backup_file))
+                    print(f"  [{timestamp}] [Backup] Uploading final database to Drive...")
+                    upload_to_drive(str(backup_file), f"{CONFIG['GDRIVE_REMOTE']}/{CONFIG['DB_NAME']}")
+                except Exception as e:
+                    print(f"  [Error] Final backup failed: {e}")
+                finally:
+                    if backup_file.exists():
+                        backup_file.unlink()
+
             print("\n[Shutdown] Waiting for background uploads to complete...")
             self.upload_executor.shutdown(wait=True)
             self.db.close()
