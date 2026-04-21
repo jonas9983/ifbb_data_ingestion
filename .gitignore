@@ -18,3 +18,4 @@
 rf-detr
 .python*
 *.db
+*.tmp

@@ -11,15 +11,20 @@ requires-python = ">=3.10"
 dependencies = [
     "requests",
     "pandas",
-    "beautifulsoup4",
     "playwright",
+    "apify-client",
+    "yt-dlp",
+    "supabase",
+    "python-dotenv",
+    "PyYAML",
+    "Pillow",
+    "tqdm",
+    "imagehash",
     "insightface",
     "onnx",
     "onnxruntime",
     "ultralytics",
     "supervision",
-    "apify-client",
-    "yt-dlp",
 ]
 
 [tool.setuptools.packages.find]
