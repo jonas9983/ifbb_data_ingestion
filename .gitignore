@@ -19,3 +19,4 @@ rf-detr
 .python*
 *.db
 *.tmp
+*.egg-info/
