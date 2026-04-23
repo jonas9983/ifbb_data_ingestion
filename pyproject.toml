@@ -21,9 +21,6 @@ dependencies = [
     "Pillow",
     "tqdm",
     "imagehash",
-    "insightface",
-    "onnx",
-    "onnxruntime",
     "ultralytics",
     "supervision",
 ]
