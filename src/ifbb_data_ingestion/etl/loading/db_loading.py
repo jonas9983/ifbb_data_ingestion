@@ -79,11 +79,10 @@ class DatabaseManager:
 
     def backup(self, backup_path: str):
         """Creates a safe backup of the database while it is potentially being accessed."""
-        with self.lock:
-            backup_conn = sqlite3.connect(backup_path)
-            with backup_conn:
-                self.conn.backup(backup_conn)
-            backup_conn.close()
+        backup_conn = sqlite3.connect(backup_path)
+        with backup_conn:
+            self.conn.backup(backup_conn, pages=250, sleep=0.005)
+        backup_conn.close()
 
     def close(self):
         with self.lock:

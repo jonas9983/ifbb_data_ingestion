@@ -27,6 +27,7 @@ class NPCNewsScraper:
     def __init__(self, years: List[int]):
         self.years = years
         self.contest_count = 0
+        self.new_images_since_backup = 0
         
         # 1. Try to download the latest database from Drive before starting
         db_path = f"data/{CONFIG['DB_NAME']}"
@@ -360,7 +361,11 @@ class NPCNewsScraper:
 
                         # Only sync the contest images in the background
                         if contest_new_images > 0:
-                            self._async_upload_and_cleanup_contest(year, c_name, target_dir, backup_db=False)
+                            self.new_images_since_backup += contest_new_images
+                            should_backup = self.new_images_since_backup >= 1000
+                            if should_backup:
+                                self.new_images_since_backup = 0
+                            self._async_upload_and_cleanup_contest(year, c_name, target_dir, backup_db=should_backup)
 
                 browser.close()
         finally:
