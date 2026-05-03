@@ -4,7 +4,7 @@ from pathlib import Path
 
 # --- CONFIG ---
 DB_PATH = "data/npc_database.db"
-GDRIVE_REMOTE = "gdrive:personal/Bodybuilding_Dataset"
+GDRIVE_REMOTE = "gdrive_personal:iron_insights/Bodybuilding_Dataset"
 
 def get_remote_zips(year):
     """Lists zips in the remote year folder."""

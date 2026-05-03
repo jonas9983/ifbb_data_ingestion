@@ -17,7 +17,7 @@ from ifbb_data_ingestion import upload_to_drive, download_from_drive, DatabaseMa
 CONFIG = {
     "BASE_URL": "https://contests.npcnewsonline.com/contests/",
     "STORAGE_BASE": "data/npc_news",
-    "GDRIVE_REMOTE": "gdrive:personal/Bodybuilding_Dataset",
+    "GDRIVE_REMOTE": "gdrive_personal:iron_insights/Bodybuilding_Dataset",
     "DISK_LIMIT_GB": 20,
     "MAX_WORKERS": 2,
     "DB_NAME": "npc_database.db"
