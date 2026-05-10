@@ -21,8 +21,9 @@ dependencies = [
     "Pillow",
     "tqdm",
     "imagehash",
-    "ultralytics",
-    "supervision",
+    "opencv-python",
+    "insightface",
+    "onnxruntime",
 ]
 
 [tool.setuptools.packages.find]
